@@ -1,3 +1,5 @@
+from typing import Generator
+
 from openai import OpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 
@@ -35,3 +37,18 @@ class AgentGateway:
         )
 
         return completion.choices[0].message.content
+
+    def invoke_streaming(self, messages: list[dict[str, str]]) -> Generator[str, None, None]:
+        """流式调用模型返回结果"""
+        if not self.client:
+            return
+
+        stream = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=messages,      # type: ignore
+            stream=True
+        )
+
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
