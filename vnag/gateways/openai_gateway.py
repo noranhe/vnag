@@ -3,7 +3,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from .gateway import BaseGateway
+from vnag.gateway import BaseGateway
 
 
 class OpenAIGateway(BaseGateway):

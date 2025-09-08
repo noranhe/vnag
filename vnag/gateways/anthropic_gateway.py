@@ -2,7 +2,7 @@ from collections.abc import Generator
 
 from anthropic import Anthropic
 
-from .gateway import BaseGateway
+from vnag.gateway import BaseGateway
 
 
 class AnthropicGateway(BaseGateway):
