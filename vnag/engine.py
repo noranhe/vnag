@@ -10,9 +10,10 @@ class BaseEngine(ABC):
         self,
         message: str,
         model_name: str,
+        max_tokens: int,
+        temperature: float,
         use_rag: bool = True,
         user_files: list[str] | None = None,
-        **kwargs: object,
     ) -> Generator:
         """对外统一接口：完成消息准备后调用网关流式输出。"""
         pass

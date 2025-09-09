@@ -195,6 +195,7 @@ class SessionManager:
             target_session_id = self.get_current_session_id()
         messages: list = self._get_messages(target_session_id)
         chat_history: list[dict[str, str]] = self._format_messages(messages)
+
         return chat_history
 
     def _ensure_current_session(self) -> None:

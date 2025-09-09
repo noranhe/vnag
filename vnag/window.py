@@ -45,13 +45,12 @@ class MainWindow(QtWidgets.QMainWindow):
         settings: dict = SETTINGS.copy()
         settings.update(load_json(SETTING_FILENAME))
 
-        self.base_url: str = settings["base_url"]
-        self.api_key: str = settings["api_key"]
         self.model_name: str = settings["model_name"]
         self.max_tokens: int = settings["max_tokens"]
         self.temperature: float = settings["temperature"]
+        self.gateway_name: str = settings["gateway_name"]
 
-        self.engine.init_engine(self.base_url, self.api_key)
+        self.engine.init_engine(self.gateway_name)
         self.engine.cleanup_deleted_sessions(force_all=False)
 
         self.setWindowTitle(f"VeighNa Agent - {__version__} - [ {AGENT_DIR} ]")
@@ -96,31 +95,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # 配置表单
         config_form: QtWidgets.QFormLayout = QtWidgets.QFormLayout()
 
-        # 基础配置项，使用实例属性
-        self.config_base_url: QtWidgets.QLineEdit = QtWidgets.QLineEdit(self.base_url)
-
-        # API Key 使用密码框
-        self.config_api_key: QtWidgets.QLineEdit = QtWidgets.QLineEdit(self.api_key)
-        self.config_api_key.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-
-        # 添加显示/隐藏按钮
-        api_key_layout: QtWidgets.QHBoxLayout = QtWidgets.QHBoxLayout()
-        api_key_layout.setContentsMargins(0, 0, 0, 0)
-        api_key_layout.addWidget(self.config_api_key)
-
-        toggle_visibility_button: QtWidgets.QPushButton = QtWidgets.QPushButton("显示")
-        toggle_visibility_button.setFixedWidth(40)
-        toggle_visibility_button.setToolTip("显示/隐藏 API Key")
-        toggle_visibility_button.clicked.connect(self._toggle_api_key_visibility)
-        api_key_layout.addWidget(toggle_visibility_button)
-
+        self.config_gateway_name: QtWidgets.QLineEdit = QtWidgets.QLineEdit(self.gateway_name)
         self.config_model_name: QtWidgets.QLineEdit = QtWidgets.QLineEdit(self.model_name)
         self.config_max_tokens: QtWidgets.QLineEdit = QtWidgets.QLineEdit(str(self.max_tokens))
         self.config_temperature: QtWidgets.QLineEdit = QtWidgets.QLineEdit(str(self.temperature))
 
         # 添加到表单
-        config_form.addRow("服务地址:", self.config_base_url)
-        config_form.addRow("API Key:", api_key_layout)
+        config_form.addRow("网关名称:", self.config_gateway_name)
         config_form.addRow("模型名称:", self.config_model_name)
         config_form.addRow("最大Token:", self.config_max_tokens)
         config_form.addRow("温度系数:", self.config_temperature)
@@ -575,19 +556,14 @@ class MainWindow(QtWidgets.QMainWindow):
             mt_text: str = self.config_max_tokens.text().strip()
             tp_text: str = self.config_temperature.text().strip()
 
-            # 通过 kwargs 原样透传（无条件加入，底层统一处理）
-            kwargs: dict[str, object] = {
-                "max_tokens": int(mt_text),
-                "temperature": float(tp_text),
-            }
-
-            # 获取引擎流式结果（其余参数通过 **kwargs 传递）
+            # 获取引擎流式结果
             stream: Generator[str, None, None] = self.engine.send_message(
                 message=text,
-                use_rag=use_rag,
-                user_files=user_files,
                 model_name=model_name,
-                **kwargs,
+                max_tokens=int(mt_text),
+                temperature=float(tp_text),
+                use_rag=use_rag,
+                user_files=user_files
             )
 
             # 简化流式输出：直接使用append_message的格式
@@ -912,19 +888,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def show_model_selector(self) -> None:
         """显示模型选择对话框"""
-        if not self.base_url or not self.api_key:
-            # 如果没有配置API，先打开连接对话框
-            QtWidgets.QMessageBox.warning(
-                self,
-                "未配置API",
-                "请先在配置标签页中设置API连接信息。",
-                QtWidgets.QMessageBox.StandardButton.Ok
-
-            )
-            self.tab_widget.setCurrentIndex(1)  # 切换到配置标签页
+        # 如果没获取到模型列表则不显示对话框
+        model_list: list[str] = self.engine.gateway.list_models()
+        if not model_list:
+            QtWidgets.QMessageBox.information(self, "模型列表", "模型列表为空", QtWidgets.QMessageBox.StandardButton.Ok)
             return
 
-        model_list: list[str] = self.engine.gateway.model_list
         dialog: ModelSelectorDialog = ModelSelectorDialog(self.model_name, model_list)
 
         if dialog.exec_():
@@ -957,24 +926,10 @@ class MainWindow(QtWidgets.QMainWindow):
             # 如果列表项已被删除，则忽略
             pass
 
-    def _toggle_api_key_visibility(self) -> None:
-        """切换API Key的可见性"""
-        sender: QtCore.QObject | None = self.sender()
-
-        if self.config_api_key.echoMode() == QtWidgets.QLineEdit.EchoMode.Password:
-            self.config_api_key.setEchoMode(QtWidgets.QLineEdit.EchoMode.Normal)
-            if sender and isinstance(sender, QtWidgets.QPushButton):
-                sender.setText("隐藏")
-        else:
-            self.config_api_key.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-            if sender and isinstance(sender, QtWidgets.QPushButton):
-                sender.setText("显示")
-
     def save_config(self) -> None:
         """保存配置"""
         settings: dict = {
-            "base_url": self.config_base_url.text(),
-            "api_key": self.config_api_key.text(),
+            "gateway_name": self.config_gateway_name.text(),
             "model_name": self.config_model_name.text(),
             "max_tokens": int(self.config_max_tokens.text()),
             "temperature": float(self.config_temperature.text())
@@ -1114,7 +1069,7 @@ class ModelSelectorDialog(QtWidgets.QDialog):
         self.model_list.itemDoubleClicked.connect(self.accept)
 
         # 刷新按钮
-        refresh_button: QtWidgets.QPushButton = QtWidgets.QPushButton("刷新模型列表")
+        refresh_button: QtWidgets.QPushButton = QtWidgets.QPushButton("查询")
         refresh_button.clicked.connect(self.load_models)
 
         # 确定和取消按钮

@@ -1,9 +1,21 @@
+from typing import Any
 from collections.abc import Generator
 
-from .engine import BaseEngine
-from .openai_gateway import OpenAIGateway
-from .rag_service import RAGService
-from .session_manager import SessionManager
+from vnag.gateway import BaseGateway
+from vnag.engine import BaseEngine
+from vnag.rag_service import RAGService
+from vnag.session_manager import SessionManager
+from vnag.object import Request, Message, Role
+from vnag.utility import load_json
+
+from vnag.gateways.openai_gateway import OpenaiGateway
+from vnag.gateways.anthropic_gateway import AnthropicGateway
+
+
+GATEWAY_MAP = {
+    "openai": OpenaiGateway,
+    "anthropic": AnthropicGateway,
+}
 
 
 class AgentEngine(BaseEngine):
@@ -16,7 +28,7 @@ class AgentEngine(BaseEngine):
         """构造函数"""
         super().__init__()
 
-        self.gateway: OpenAIGateway = OpenAIGateway()
+        self.gateway: BaseGateway
         self.rag_service: RAGService
         self.session_manager: SessionManager
 
@@ -24,9 +36,14 @@ class AgentEngine(BaseEngine):
 
         self.chat_history: list = []
 
-    def init_engine(self, base_url: str, api_key: str) -> None:
+    def init_engine(self, gateway_name: str) -> None:
         """初始化引擎依赖（例如网关）。"""
-        self.inited = self.gateway.init(base_url, api_key)
+        gateway_name = gateway_name.lower()
+        gateway_filename: str = f"connect_{gateway_name}.json"
+        setting: dict = load_json(gateway_filename)
+
+        self.gateway = GATEWAY_MAP.get(gateway_name, OpenaiGateway)()
+        self.inited = self.gateway.init(setting)
 
         if self.inited:
             # 网关成功初始化后再创建 RAGService / SessionManager
@@ -52,9 +69,10 @@ class AgentEngine(BaseEngine):
         self,
         message: str,
         model_name: str,
+        max_tokens: int,
+        temperature: float,
         use_rag: bool = True,  # 占位参数，后续接入 RAG
         user_files: list[str] | None = None,  # 占位参数，后续接入附件
-        **kwargs: object
     ) -> Generator[str, None, None]:
         """最小实现：直接将单轮 user 消息发给网关。
 
@@ -63,14 +81,14 @@ class AgentEngine(BaseEngine):
         - 目前仅构造最小 messages，便于逐步迁移。
         """
         if not self.inited:
-            return
+            yield from ()
 
         if not model_name:
             print("模型名称为空")
-            return
+            yield from ()
 
         if not message.strip():
-            return
+            yield from ()
 
         # 载入当前会话历史，并在引擎侧完成 RAG/CHAT 处理
         history: list = self.session_manager.load_session()
@@ -82,22 +100,30 @@ class AgentEngine(BaseEngine):
             {"role": "user", "content": message},
             {"role": "assistant", "content": ""},
         ]
-        # （已去除调试打印）
 
         # 网关层负责实际的流式调用（按次传入 model_name 与 kwargs）
 
         # RAG模板只围绕最后一条user问题做检索与拼装
         # 发给模型的messages是完整会话历史 + 本轮处理后的消息
 
-        for chunk in self.gateway.invoke_streaming(
-            messages=messages,
-            model_name=model_name,
-            **kwargs,
-        ):
-            # 流式累积到最后一条 assistant（同步内存态）
-            if self.chat_history and self.chat_history[-1].get("role") == "assistant":
-                self.chat_history[-1]["content"] += chunk
-            yield chunk
+        # 转换为标准消息对象列表（显式循环）
+        msg_objs: list[Message] = []
+        for m in messages:
+            msg_objs.append(Message(role=Role(m["role"]), content=m["content"]))
+
+        req: Request = Request(
+            model=model_name,
+            messages=msg_objs,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        for delta in self.gateway.stream(req):
+            if delta.content:
+                # 流式累积到最后一条 assistant（同步内存态）
+                if self.chat_history and self.chat_history[-1].get("role") == "assistant":
+                    self.chat_history[-1]["content"] += delta.content
+                yield delta.content
 
         # 持久化本轮对话
         self.session_manager.save_session(self.chat_history)
