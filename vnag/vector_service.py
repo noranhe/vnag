@@ -5,8 +5,8 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 from sentence_transformers import SentenceTransformer
 
-from .document_service import DocumentChunk
-from .utility import get_folder_path
+from vnag.splitter import DocumentChunk
+from vnag.utility import get_folder_path
 
 
 class VectorService:
