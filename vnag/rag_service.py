@@ -1,9 +1,10 @@
 from pathlib import Path
 
-from .document_service import DocumentService
-from .vector_service import VectorService
-from .utility import TEMP_DIR
-from .template import RAG_PROMPT_TEMPLATE, CHAT_PROMPT_TEMPLATE
+from vnag.splitters.markdown_splitter import MarkdownSplitter
+
+from vnag.vector_service import VectorService
+from vnag.utility import TEMP_DIR, read_text_file, read_pdf_file
+from vnag.template import RAG_PROMPT_TEMPLATE, CHAT_PROMPT_TEMPLATE
 
 
 class RAGService:
@@ -11,7 +12,7 @@ class RAGService:
 
     def __init__(self) -> None:
         """构造函数"""
-        self.document_service = DocumentService()
+        self.markdown_splitter = MarkdownSplitter()
         self.vector_service = VectorService()
 
         self._init_knowledge_base()
@@ -40,7 +41,7 @@ class RAGService:
         total: int = len(file_paths)
         for idx, file_path in enumerate(file_paths, start=1):
             print(f"[RAG] 导入进度 {idx}/{total}: {Path(file_path).name}")
-            chunks: list = self.document_service.process_file(file_path)
+            chunks: list = self.add_md_file(file_path)
             all_chunks.extend(chunks)
 
         if all_chunks:
@@ -56,14 +57,17 @@ class RAGService:
 
         user_content: str = ""
         for file_path in user_files:
+            path: Path = Path(file_path)
+            ext: str = path.suffix.lower()
             try:
-                path: Path = Path(file_path)
-                content: str = self.document_service.read_file_text(str(path))
-                user_content += f"\n\n用户提交文件 {path.name}:\n{content}"
-            except ValueError:
-                # 不支持的文件格式
-                path = Path(file_path)
-                user_content += f"\n\n用户提交文件 {path.name}: (不支持的文件格式)"
+                if ext in [".md", ".txt", ".py"]:
+                    content: str = read_text_file(path)
+                    user_content += f"\n\n用户提交文件 {path.name}:\n{content}"
+                elif ext == ".pdf":
+                    content = read_pdf_file(path)
+                    user_content += f"\n\n用户提交文件 {path.name}:\n{content}"
+                else:
+                    user_content += f"\n\n用户提交文件 {path.name}: (不支持的文件格式)"
             except Exception:
                 user_content += f"\n\n用户提交文件 {file_path}: (读取失败)"
 
@@ -159,3 +163,16 @@ class RAGService:
         """获取文档数量"""
         count: int = self.vector_service.get_document_count()
         return count
+
+    def add_md_file(self, file_path: str) -> list:
+        """读取单个 Markdown 文件并切分为文档块。"""
+        path: Path = Path(file_path)
+        text: str = read_text_file(path)
+        meta: dict[str, str] = {
+            'source': file_path,
+            'filename': path.name,
+            'file_type': path.suffix.lower(),
+        }
+        chunks: list = self.markdown_splitter.split_text(text, meta)
+        return chunks
+
