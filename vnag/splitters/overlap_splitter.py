@@ -48,5 +48,3 @@ class OverlapSplitter(BaseSplitter):
             out.append(DocumentChunk(text=piece, metadata=meta))
 
         return out
-
-
