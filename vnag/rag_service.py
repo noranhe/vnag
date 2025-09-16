@@ -1,8 +1,7 @@
 from pathlib import Path
 
-from vnag.splitters.markdown_splitter import MarkdownSplitter
-
-from vnag.vector_service import VectorService
+from vnag.segmenters.markdown_segmenter import MarkdownSegmenter
+from vnag.vectors.chromadb_vector import ChromaVector
 from vnag.utility import TEMP_DIR, read_text_file, read_pdf_file
 from vnag.template import RAG_PROMPT_TEMPLATE, CHAT_PROMPT_TEMPLATE
 
@@ -12,12 +11,12 @@ class RAGService:
 
     def __init__(self) -> None:
         """构造函数"""
-        self.markdown_splitter = MarkdownSplitter()
-        self.vector_service = VectorService()
+        self.markdown_segmenter = MarkdownSegmenter()
+        self.vector = ChromaVector()
 
-        self._init_knowledge_base()
+        self.init_knowledge_base()
 
-    def _init_knowledge_base(self) -> None:
+    def init_knowledge_base(self) -> None:
         """初始化知识库"""
         # docs目录位于 .vnag 目录内
         docs_dir: Path = TEMP_DIR / "docs"
@@ -28,7 +27,7 @@ class RAGService:
         # 只收集md文件，保持简单
         doc_files: list = list(docs_dir.glob("**/*.md"))
 
-        if doc_files and self.vector_service.get_document_count() == 0:
+        if doc_files and self.get_document_count() == 0:
             file_paths: list = [str(f) for f in doc_files]
             self.add_documents(file_paths)
 
@@ -37,15 +36,15 @@ class RAGService:
         if not file_paths:
             return False
 
-        all_chunks: list = []
+        all_segments: list = []
         total: int = len(file_paths)
         for idx, file_path in enumerate(file_paths, start=1):
             print(f"[RAG] 导入进度 {idx}/{total}: {Path(file_path).name}")
-            chunks: list = self.add_md_file(file_path)
-            all_chunks.extend(chunks)
+            segments: list = self.add_md_file(file_path)
+            all_segments.extend(segments)
 
-        if all_chunks:
-            self.vector_service.add_documents(all_chunks)
+        if all_segments:
+            self.vector.add_segments(all_segments)
             return True
 
         return False
@@ -91,10 +90,7 @@ class RAGService:
 
         # 检索知识库文档
         # k=3: 检索3个最相关文档，平衡回答质量和token消耗
-        relevant_docs: list = self.vector_service.similarity_search(
-            question,
-            k=3,
-        )
+        relevant_segments = self.vector.retrieve(question, k=3)
 
         # 处理用户提交的文件
         user_content: str = self._process_user_files(user_files)
@@ -104,10 +100,10 @@ class RAGService:
         # 构建完整上下文
         context_parts: list = []
 
-        if relevant_docs:
+        if relevant_segments:
             kb_context: str = "\n\n".join([
-                f"知识库文档 {i+1}:\n{doc['text']}"
-                for i, doc in enumerate(relevant_docs)
+                f"知识库文档 {i+1}:\n{seg.text}"
+                for i, seg in enumerate(relevant_segments)
             ])
             context_parts.append(kb_context)
 
@@ -161,7 +157,7 @@ class RAGService:
 
     def get_document_count(self) -> int:
         """获取文档数量"""
-        count: int = self.vector_service.get_document_count()
+        count: int = self.vector.count
         return count
 
     def add_md_file(self, file_path: str) -> list:
@@ -173,6 +169,6 @@ class RAGService:
             'filename': path.name,
             'file_type': path.suffix.lower(),
         }
-        chunks: list = self.markdown_splitter.split_text(text, meta)
-        return chunks
+        segments: list = self.markdown_segmenter.parse(text, meta)
+        return segments
 

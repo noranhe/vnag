@@ -3,6 +3,13 @@ from pydantic import BaseModel, Field
 from .constant import Role, FinishReason
 
 
+class Segment(BaseModel):
+    """A unified structure for document chunks."""
+    text: str
+    metadata: dict[str, str]
+    score: float = 0
+
+
 class Message(BaseModel):
     """标准化的消息对象"""
     role: Role
