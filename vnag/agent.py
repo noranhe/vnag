@@ -1,13 +1,17 @@
 import json
 from pathlib import Path
 from uuid import uuid4
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import TYPE_CHECKING
 from collections.abc import Generator
 
 from pydantic import BaseModel, Field
 
-from .object import Session, Delta, Response
+from .object import (
+    Session,Delta, Request, Response, Message,
+    Usage, ToolCall, ToolResult
+)
+from .constant import Role, FinishReason
 from .utility import AGENT_DIR
 
 if TYPE_CHECKING:
@@ -29,7 +33,7 @@ class AgentConfig(BaseModel):
     tools: list[str] = Field(default_factory=list)
 
 
-class BaseAgent(ABC):
+class BaseAgent:
     """
     Agent模板类（对应CtaTemplate）。
     """
@@ -39,6 +43,12 @@ class BaseAgent(ABC):
         self.engine: AgentEngine = engine
         self.config: AgentConfig = config
         self.session: Session = session
+
+        self.model: str = ""
+        self.tool_names: str = []
+        self.temperature: float | None = None
+        self.max_tokens: int | None = None
+        self.max_iterations: int = 10
 
     def save_session(self) -> None:
         """将会话状态保存到文件。"""
@@ -60,16 +70,147 @@ class BaseAgent(ABC):
         if file_path.exists():
             file_path.unlink()
 
-    @abstractmethod
-    def stream(self, prompt: str) -> Generator[Delta, None, None]:
-        """
-        所有Agent子类必须实现的流式执行接口。
-        """
-        pass
+    def _prepare_messages(self) -> list[Message]:
+        """准备请求所用的消息列表"""
+        messages = self.session.messages.copy()
 
-    @abstractmethod
+        # 如果有系统提示词，则将其作为第一条消息
+        if self.config.system_prompt and (not messages or messages[0].role != Role.SYSTEM):
+            system_message = Message(role=Role.SYSTEM, content=self.config.system_prompt)
+            messages.insert(0, system_message)
+
+        return messages
+
+    def stream(self, prompt: str) -> Generator[Delta, None, None]:
+        """流式生成"""
+        # 添加系统提示词
+        if not self.session.messages:
+            system_message: Message = Message(role=Role.SYSTEM, content=self.config.system_prompt)
+            self.session.messages.append(system_message)
+
+        # 将用户输入添加到会话
+        user_message: Message = Message(role=Role.USER, content=prompt)
+        self.session.messages.append(user_message)
+
+        # 初始化变量
+        iteration: int = 0                                  # 迭代次数
+        response_id: str = ""                               # 响应ID
+
+        # 主循环，该循环负责处理多次工具调用的情况
+        while iteration < self.max_iterations:
+            # 迭代次数加1
+            iteration += 1
+
+            # 准备请求
+            request: Request = self._prepare_request(
+                messages=self.session.messages,
+                model=self.model,
+                tool_names=self.tool_names,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
+            )
+
+            # 本轮循环中的数据缓存
+            collected_content: str = ""                     # 累积收到的文本内容
+            collected_tool_calls: list[ToolCall] = []       # 累积收到的工具调用请求
+            finish_reason: FinishReason | None = None       # 累积收到的结束原因
+
+            # 发送请求到AI服务端，并收集响应
+            for delta in self.engine.stream(request):
+                # 记录响应ID
+                if delta.id and not response_id:
+                    response_id = delta.id
+
+                # 累积收到的文本内容
+                if delta.content:
+                    collected_content += delta.content
+
+                # 累积收到的工具调用请求
+                if delta.calls:
+                    collected_tool_calls.extend(delta.calls)
+
+                # 记录结束原因
+                if delta.finish_reason:
+                    finish_reason = delta.finish_reason
+
+                # 将原始的 Delta 对象直接转发给调用者，实现实时流式效果
+                yield delta
+            # 流式响应结束后，根据结束原因决定下一步操作
+            if finish_reason == FinishReason.STOP:              # 正常结束
+                break
+
+            elif (
+                finish_reason == FinishReason.TOOL_CALLS and    # 需要调用工具
+                collected_tool_calls                            # 且收到了具体的工具调用请求
+            ):
+                # 将 AI 的回复（包括思考过程和工具调用请求）作为一个消息添加到工作列表中
+                assistant_msg: Message = Message(
+                    role=Role.ASSISTANT,
+                    content=collected_content,
+                    tool_calls=collected_tool_calls
+                )
+                self.session.messages.append(assistant_msg)
+
+                # 批量执行所有工具调用
+                tool_results: list[ToolResult] = []
+
+                for tool_call in collected_tool_calls:
+                    # 在执行前，先通过 yield 发送一个通知，告诉上层应用“正在执行哪个工具”
+                    yield Delta(
+                        id=response_id or str(uuid4()),
+                        content=f"\n\n[执行工具: {tool_call.name}]\n\n"
+                    )
+
+                    # 执行单个工具调用，并记录结果
+                    result: ToolResult = self._execute_tool(tool_call)
+                    tool_results.append(result)
+
+                # 将所有工具的执行结果打包成一个消息，也添加到工作列表中
+                user_message: Message = Message(
+                    role=Role.USER,
+                    tool_results=tool_results
+                )
+                self.session.messages.append(user_message)
+
+                # 继续下一次循环
+                continue
+            else:
+                # 其他异常情况，直接退出
+                break
+
+        # 如果循环次数达到上限，发送一条警告信息
+        if iteration >= self.max_iterations:
+            yield Delta(
+                id=response_id or str(uuid4()),
+                content="\n[警告: 达到最大工具调用次数限制]\n"
+            )
+
+        # 将最新会话保存到文件
+        self.save_session()
+
     def invoke(self, prompt: str) -> Response:
-        """
-        所有Agent子类必须实现的阻塞式执行接口。
-        """
-        pass
+        """阻塞式生成"""
+        full_content: str = ""
+        response_id: str = ""
+        total_usage: Usage = Usage()
+
+        # 遍历 stream 方法返回的生成器，消费所有 Delta 数据
+        for delta in self.stream(prompt):
+            if delta.id:
+                response_id = delta.id
+
+            # 拼接完整的文本内容
+            if delta.content:
+                full_content += delta.content
+
+            # 累加 Token 使用量
+            if delta.usage:
+                total_usage.input_tokens += delta.usage.input_tokens
+                total_usage.output_tokens += delta.usage.output_tokens
+
+        # 将所有收集到的信息组装成一个 Response 对象并返回
+        return Response(
+            id=response_id,
+            content=full_content,
+            usage=total_usage
+        )
