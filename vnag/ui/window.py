@@ -4,7 +4,7 @@ import json
 from ..engine import AgentEngine
 from ..utility import WORKING_DIR
 from ..object import Session
-from ..agent import AgentConfig, BaseAgent
+from ..agent import AgentProfile, TaskAgent
 from .. import __version__
 from .widget import AgentWidget, ToolsDialog, ModelsDialog, AgentsDialog
 from .qt import QtWidgets, QtGui, QtCore
@@ -23,7 +23,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.engine: AgentEngine = engine
 
-        self.agent_configs: dict[str, AgentConfig] = {}
+        self.agent_profiles: dict[str, AgentProfile] = {}
         self.agent_widgets: dict[str, AgentWidget] = {}
         self.current_id: str = ""
         self.models: list[str] = self.engine.list_models()
@@ -118,7 +118,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog.exec()
 
         # 重新加载智能体配置
-        self.agent_configs = self.engine.load_agent_configs()
+        self.agent_profiles = self.engine.load_agent_profiles()
 
     def show_tools(self) -> None:
         """显示工具"""
@@ -132,17 +132,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_data(self) -> None:
         """加载智能体配置和所有会话"""
-        self.agent_configs = self.engine.load_agent_configs()
+        self.agent_profiles = self.engine.load_agent_profiles()
 
         # 如果没有任何Agent配置，则创建一个默认的
-        if not self.agent_configs:
-            default_config: AgentConfig = AgentConfig(
+        if not self.agent_profiles:
+            default_config: AgentProfile = AgentProfile(
                 name="通用聊天助手",
-                agent_type="ChatAgent",
                 system_prompt="你是一个乐于助人的人工智能助手。"
             )
-            self.engine.save_agent_config(default_config)
-            self.agent_configs[default_config.id] = default_config
+            self.engine.save_agent_profile(default_config)
+            self.agent_profiles[default_config.id] = default_config
 
         self.load_sessions()
 
@@ -161,11 +160,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 data: dict = json.load(f)
                 session: Session = Session.model_validate(data)
 
-            agent_config: AgentConfig | None = self.agent_configs.get(session.agent_id)
-            if not agent_config:
-                agent_config = next(iter(self.agent_configs.values()))
+            agent_profile: AgentProfile | None = self.agent_profiles.get(session.agent_id)
+            if not agent_profile:
+                agent_profile = next(iter(self.agent_profiles.values()))
 
-            agent: BaseAgent = self.engine.create_agent_instance(agent_config, session)
+            agent: TaskAgent = self.engine.create_agent(agent_profile, session)
             self.add_agent_widget(agent)
 
         if not self.agent_widgets:
@@ -198,12 +197,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def new_session(self) -> None:
         """创建新会话"""
         # 如果没有Agent配置则返回
-        if not self.agent_configs:
+        if not self.agent_profiles:
             QtWidgets.QMessageBox.warning(self, "创建失败", "请先在“功能”->“管理智能体”中创建一个智能体配置。")
             return
 
         # 让用户选择一个Agent配置
-        agent_names: list[str] = [config.name for config in self.agent_configs.values()]
+        agent_names: list[str] = [config.name for config in self.agent_profiles.values()]
         name, ok = QtWidgets.QInputDialog.getItem(
             self,
             "选择智能体",
@@ -215,8 +214,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not (ok and name):
             return
 
-        selected_config: AgentConfig | None = None
-        for config in self.agent_configs.values():
+        selected_config: AgentProfile | None = None
+        for config in self.agent_profiles.values():
             if config.name == name:
                 selected_config = config
                 break
@@ -226,14 +225,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 创建新Session和Agent实例
         session: Session = Session(agent_id=selected_config.id)
-        agent: BaseAgent = self.engine.create_agent_instance(selected_config, session)
+        agent: TaskAgent = self.engine.create_agent(selected_config, session)
         agent.save_session()
 
         self.add_agent_widget(agent)
         self.update_list()
         self.switch_session(session.id)
 
-    def add_agent_widget(self, agent: BaseAgent) -> None:
+    def add_agent_widget(self, agent: TaskAgent) -> None:
         """添加会话窗口"""
         widget: AgentWidget = AgentWidget(self.engine, agent, self.models)
         self.stacked_widget.addWidget(widget)

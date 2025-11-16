@@ -7,7 +7,7 @@ from pathlib import Path
 from ..constant import Role
 from ..engine import AgentEngine
 from ..object import Message, Session, ToolSchema
-from ..agent import AgentConfig, BaseAgent
+from ..agent import AgentProfile, TaskAgent
 
 from .qt import (
     QtCore,
@@ -132,7 +132,7 @@ class AgentWidget(QtWidgets.QWidget):
     def __init__(
         self,
         engine: AgentEngine,
-        agent: BaseAgent,
+        agent: TaskAgent,
         models: list[str],
         parent: QtWidgets.QWidget | None = None
     ) -> None:
@@ -140,7 +140,7 @@ class AgentWidget(QtWidgets.QWidget):
         super().__init__(parent)
 
         self.engine: AgentEngine = engine
-        self.agent: BaseAgent = agent
+        self.agent: TaskAgent = agent
         self.session: Session = agent.session
         self.models: list[str] = models
 
@@ -328,7 +328,7 @@ class AgentsDialog(QtWidgets.QDialog):
         super().__init__(parent)
 
         self.engine: AgentEngine = engine
-        self.agent_configs: dict[str, AgentConfig] = self.engine.load_agent_configs()
+        self.agent_profiles: dict[str, AgentProfile] = self.engine.load_agent_profiles()
 
         self.init_ui()
 
@@ -340,14 +340,12 @@ class AgentsDialog(QtWidgets.QDialog):
         # Left list widget
         self.agent_list: QtWidgets.QListWidget = QtWidgets.QListWidget()
         self.agent_list.itemClicked.connect(self.on_agent_selected)
-        for config in self.agent_configs.values():
+        for config in self.agent_profiles.values():
             item = QtWidgets.QListWidgetItem(config.name, self.agent_list)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, config.id)
 
         # Right form layout
         self.name_line: QtWidgets.QLineEdit = QtWidgets.QLineEdit()
-        self.type_combo: QtWidgets.QComboBox = QtWidgets.QComboBox()
-        self.type_combo.addItems(self.engine.agent_classes.keys())
         self.prompt_text: QtWidgets.QTextEdit = QtWidgets.QTextEdit()
 
         all_tools: list[str] = [schema.name for schema in self.engine.get_tool_schemas()]
@@ -367,7 +365,6 @@ class AgentsDialog(QtWidgets.QDialog):
 
         form: QtWidgets.QFormLayout = QtWidgets.QFormLayout()
         form.addRow("名称", self.name_line)
-        form.addRow("类型", self.type_combo)
         form.addRow("系统提示词", self.prompt_text)
         form.addRow("可用工具", tool_area)
 
@@ -403,10 +400,9 @@ class AgentsDialog(QtWidgets.QDialog):
     def on_agent_selected(self, item: QtWidgets.QListWidgetItem) -> None:
         """显示选中智能体的配置"""
         agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        config: AgentConfig = self.agent_configs[agent_id]
+        config: AgentProfile = self.agent_profiles[agent_id]
 
         self.name_line.setText(config.name)
-        self.type_combo.setCurrentText(config.agent_type)
         self.prompt_text.setPlainText(config.system_prompt)
 
         for name, button in self.tool_buttons.items():
@@ -414,10 +410,10 @@ class AgentsDialog(QtWidgets.QDialog):
 
     def add_agent(self) -> None:
         """新建智能体配置"""
-        config = AgentConfig(name="未命名", agent_type="ChatAgent")
-        self.engine.save_agent_config(config)
+        config = AgentProfile(name="未命名")
+        self.engine.save_agent_profile(config)
 
-        self.agent_configs[config.id] = config
+        self.agent_profiles[config.id] = config
         item = QtWidgets.QListWidgetItem(config.name, self.agent_list)
         item.setData(QtCore.Qt.ItemDataRole.UserRole, config.id)
         self.agent_list.setCurrentItem(item)
@@ -430,12 +426,11 @@ class AgentsDialog(QtWidgets.QDialog):
             return
 
         agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        config: AgentConfig = self.agent_configs[agent_id]
+        config: AgentProfile = self.agent_profiles[agent_id]
 
         config.name = self.name_line.text()
         item.setText(config.name)
 
-        config.agent_type = self.type_combo.currentText()
         config.system_prompt = self.prompt_text.toPlainText()
 
         selected_tools: list[str] = []
@@ -444,7 +439,7 @@ class AgentsDialog(QtWidgets.QDialog):
                 selected_tools.append(name)
         config.tools = selected_tools
 
-        self.engine.save_agent_config(config)
+        self.engine.save_agent_profile(config)
         QtWidgets.QMessageBox.information(self, "成功", "智能体配置已保存！")
 
     def delete_agent(self) -> None:
@@ -464,8 +459,8 @@ class AgentsDialog(QtWidgets.QDialog):
         if reply == QtWidgets.QMessageBox.StandardButton.Yes:
             agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
 
-            self.agent_configs.pop(agent_id)
-            self.engine.delete_agent_config(agent_id)
+            self.agent_profiles.pop(agent_id)
+            self.engine.delete_agent_profile(agent_id)
 
             self.agent_list.takeItem(self.agent_list.row(item))
 

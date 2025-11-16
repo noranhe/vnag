@@ -24,7 +24,7 @@ from .constant import Role, FinishReason
 from .mcp import McpManager
 from .local import LocalManager
 from .tracer import LogTracer
-from .agent import AgentConfig, BaseAgent
+from .agent import AgentProfile, TaskAgent
 from .utility import WORKING_DIR
 
 
@@ -49,43 +49,10 @@ class AgentEngine:
         self._local_tools: dict[str, ToolSchema] = {}
         self._mcp_tools: dict[str, ToolSchema] = {}
 
-        self._agent_classes: dict[str, type[BaseAgent]] = {}
-
     def init(self) -> None:
         """初始化引擎"""
         self._load_local_tools()
         self._load_mcp_tools()
-        self._load_agent_classes()
-
-    def _load_agent_classes(self) -> None:
-        """加载所有智能体类"""
-        path_1: Path = Path(__file__).parent.joinpath("agents")
-        self._load_agent_classes_from_folder(path_1, "vnag.agents")
-
-        path_2: Path = Path.cwd().joinpath("agents")
-        self._load_agent_classes_from_folder(path_2, "agents")
-
-    def _load_agent_classes_from_folder(self, folder_path: Path, module_name: str) -> None:
-        """从文件夹加载智能体类"""
-        pathname: str = str(folder_path.joinpath("*.py"))
-
-        for filepath in glob(pathname):
-            filename: str = Path(filepath).stem
-            name: str = f"{module_name}.{filename}"
-            self._load_agent_classes_from_module(name)
-
-    def _load_agent_classes_from_module(self, module_name: str) -> None:
-        """从模块加载智能体类"""
-        try:
-            module: ModuleType = importlib.import_module(module_name)
-
-            for name in dir(module):
-                value: Any = getattr(module, name)
-                if isinstance(value, type) and issubclass(value, BaseAgent):
-                    self._agent_classes[value.__name__] = value
-        except Exception:
-            msg: str = f"Agent class [{module_name}] load failed: {traceback.format_exc()}"
-            print(msg)
 
     def _load_local_tools(self) -> None:
         """加载本地工具"""
@@ -96,6 +63,38 @@ class AgentEngine:
         """加载MCP工具"""
         for schema in self._mcp_manager.list_tools():
             self._mcp_tools[schema.name] = schema
+
+    def load_agent_profiles(self) -> dict[str, AgentProfile]:
+        """从JSON文件加载所有Agent配置模板。"""
+        configs: dict[str, AgentProfile] = {}
+
+        for file_path in AGENT_CONFIG_DIR.glob("*.json"):
+            with open(file_path, encoding="UTF-8") as f:
+                data: dict = json.load(f)
+                config: AgentProfile = AgentProfile.model_validate(data)
+                configs[config.id] = config
+
+        return configs
+
+    def save_agent_profile(self, config: AgentProfile) -> None:
+        """保存一个Agent配置模板到JSON。"""
+        data: dict[str, AgentProfile] = config.model_dump()
+
+        file_path = AGENT_CONFIG_DIR.joinpath(f"{config.id}.json")
+
+        with open(file_path, "w", encoding="UTF-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+
+    def delete_agent_profile(self, agent_id: str) -> None:
+        """删除一个Agent配置模板。"""
+        file_path = AGENT_CONFIG_DIR.joinpath(f"{agent_id}.json")
+
+        if file_path.exists():
+            file_path.unlink()
+
+    def create_agent(self, profile: AgentProfile, session: Session) -> TaskAgent:
+        """【核心工厂方法】根据配置和会话，创建一个全新的Agent实例。"""
+        return TaskAgent(self, profile, session)
 
     def get_tool_schemas(self, tool_names: list[str] | None = None) -> list[ToolSchema]:
         """获取所有工具的Schema"""
@@ -115,43 +114,6 @@ class AgentEngine:
     def list_models(self) -> list[str]:
         """查询可用模型列表"""
         return self.gateway.list_models()
-
-    def load_agent_configs(self) -> dict[str, AgentConfig]:
-        """从JSON文件加载所有Agent配置模板。"""
-        configs: dict[str, AgentConfig] = {}
-
-        for file_path in AGENT_CONFIG_DIR.glob("*.json"):
-            with open(file_path, encoding="UTF-8") as f:
-                data: dict = json.load(f)
-                config: AgentConfig = AgentConfig.model_validate(data)
-                configs[config.id] = config
-
-        return configs
-
-    def save_agent_config(self, config: AgentConfig) -> None:
-        """保存一个Agent配置模板到JSON。"""
-        data: dict[str, AgentConfig] = config.model_dump()
-
-        file_path = AGENT_CONFIG_DIR.joinpath(f"{config.id}.json")
-
-        with open(file_path, "w", encoding="UTF-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-
-    def delete_agent_config(self, agent_id: str) -> None:
-        """删除一个Agent配置模板。"""
-        file_path = AGENT_CONFIG_DIR.joinpath(f"{agent_id}.json")
-
-        if file_path.exists():
-            file_path.unlink()
-
-    def create_agent_instance(self, config: AgentConfig, session: Session) -> BaseAgent:
-        """【核心工厂方法】根据配置和会话，创建一个全新的Agent实例。"""
-        agent_class = self._agent_classes.get(config.agent_type)
-
-        if not agent_class:
-            raise ValueError(f"Agent class {config.agent_type} not found.")
-
-        return agent_class(self, config, session)
 
     def execute_tool(self, tool_call: ToolCall) -> ToolResult:
         """执行单个工具并返回结果"""

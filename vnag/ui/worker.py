@@ -1,6 +1,6 @@
 import traceback
 
-from ..agent import BaseAgent
+from ..agent import TaskAgent
 from .qt import QtCore
 
 
@@ -22,11 +22,11 @@ class StreamWorker(QtCore.QRunnable):
     """
     在线程池中处理流式网关请求的Worker
     """
-    def __init__(self, agent: BaseAgent, prompt: str) -> None:
+    def __init__(self, agent: TaskAgent, prompt: str) -> None:
         """构造函数"""
         super().__init__()
 
-        self.agent: BaseAgent = agent
+        self.agent: TaskAgent = agent
         self.prompt: str = prompt
         self.signals: StreamSignals = StreamSignals()
 

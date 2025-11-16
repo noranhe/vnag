@@ -22,26 +22,25 @@ SESSION_DIR: Path = WORKING_DIR.joinpath("session")
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 
-class AgentConfig(BaseModel):
+class AgentProfile(BaseModel):
     """
     Agent实例的配置数据模型（对应策略的JSON配置）。
     """
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str                                   # 实例名称，如“市场研究员”
-    agent_type: str                             # 对应的Agent类名，如“ChatAgent”
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
 
 
-class BaseAgent:
+class TaskAgent:
     """
-    Agent模板类（对应CtaTemplate）。
+    标准的、可直接使用的任务智能体。
     """
 
-    def __init__(self, engine: "AgentEngine", config: AgentConfig, session: Session):
+    def __init__(self, engine: "AgentEngine", config: AgentProfile, session: Session):
         """构造函数"""
         self.engine: AgentEngine = engine
-        self.config: AgentConfig = config
+        self.config: AgentProfile = config
         self.session: Session = session
 
         self.model: str = ""
