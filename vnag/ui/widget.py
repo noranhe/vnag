@@ -350,7 +350,7 @@ class AgentsDialog(QtWidgets.QDialog):
         self.type_combo.addItems(self.engine.agent_classes.keys())
         self.prompt_text: QtWidgets.QTextEdit = QtWidgets.QTextEdit()
 
-        all_tools: list[str] = [schema.name for schema in self.engine.get_all_tool_schemas()]
+        all_tools: list[str] = [schema.name for schema in self.engine.get_tool_schemas()]
         self.tool_buttons: dict[str, QtWidgets.QCheckBox] = {}
         tool_layout = QtWidgets.QVBoxLayout()
         for tool_name in all_tools:

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from .object import (
     Session,Delta, Request, Response, Message,
-    Usage, ToolCall, ToolResult
+    Usage, ToolCall, ToolResult, ToolSchema
 )
 from .constant import Role, FinishReason
 from .utility import AGENT_DIR
@@ -96,16 +96,19 @@ class BaseAgent:
         iteration: int = 0                                  # 迭代次数
         response_id: str = ""                               # 响应ID
 
+        # 查询工具定义
+        tool_schemas: list[ToolSchema] = self.engine.get_tool_schemas(self.tool_names)
+
         # 主循环，该循环负责处理多次工具调用的情况
         while iteration < self.max_iterations:
             # 迭代次数加1
             iteration += 1
 
             # 准备请求
-            request: Request = self._prepare_request(
-                messages=self.session.messages,
+            request: Request = Request(
                 model=self.model,
-                tool_names=self.tool_names,
+                messages=self.session.messages,
+                tools_schemas=tool_schemas,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens
             )
@@ -162,7 +165,7 @@ class BaseAgent:
                     )
 
                     # 执行单个工具调用，并记录结果
-                    result: ToolResult = self._execute_tool(tool_call)
+                    result: ToolResult = self.engine.execute_tool(tool_call)
                     tool_results.append(result)
 
                 # 将所有工具的执行结果打包成一个消息，也添加到工作列表中

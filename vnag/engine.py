@@ -84,11 +84,20 @@ class AgentEngine:
         for schema in self._mcp_manager.list_tools():
             self._mcp_tools[schema.name] = schema
 
-    def get_all_tool_schemas(self) -> list[ToolSchema]:
+    def get_tool_schemas(self, tool_names: list[str] | None = None) -> list[ToolSchema]:
         """获取所有工具的Schema"""
         local_schemas: list[ToolSchema] = list(self._local_tools.values())
         mcp_schemas: list[ToolSchema] = list(self._mcp_tools.values())
-        return local_schemas + mcp_schemas
+        all_schemas: list[ToolSchema] = local_schemas + mcp_schemas
+
+        if tool_names:
+            tool_schemas: list[ToolSchema] = []
+            for schema in all_schemas:
+                if schema.name in tool_names:
+                    tool_schemas.append(schema)
+            return tool_schemas
+        else:
+            return all_schemas
 
     def list_models(self) -> list[str]:
         """查询可用模型列表"""
