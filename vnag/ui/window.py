@@ -236,7 +236,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def add_session_widget(self, agent: BaseAgent) -> None:
         """添加会话窗口"""
         widget: SessionWidget = SessionWidget(self.engine, agent, self.models)
-        widget.set_name_signal.connect(self.update_list)
         self.stacked_widget.addWidget(widget)
         self.session_widgets[agent.session.id] = widget
 

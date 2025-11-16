@@ -129,8 +129,6 @@ class HistoryWidget(QtWebEngineWidgets.QWebEngineView):
 class SessionWidget(QtWidgets.QWidget):
     """会话控件"""
 
-    set_name_signal: QtCore.Signal = QtCore.Signal()
-
     def __init__(
         self,
         engine: AgentEngine,
