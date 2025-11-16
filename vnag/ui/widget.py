@@ -126,7 +126,7 @@ class HistoryWidget(QtWebEngineWidgets.QWebEngineView):
         return self.full_content
 
 
-class SessionWidget(QtWidgets.QWidget):
+class AgentWidget(QtWidgets.QWidget):
     """会话控件"""
 
     def __init__(

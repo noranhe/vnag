@@ -6,7 +6,7 @@ from ..utility import AGENT_DIR
 from ..object import Session
 from ..agent import AgentConfig, BaseAgent
 from .. import __version__
-from .widget import SessionWidget, ToolsDialog, ModelsDialog, AgentsDialog
+from .widget import AgentWidget, ToolsDialog, ModelsDialog, AgentsDialog
 from .qt import QtWidgets, QtGui, QtCore
 
 
@@ -24,7 +24,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.engine: AgentEngine = engine
 
         self.agent_configs: dict[str, AgentConfig] = {}
-        self.session_widgets: dict[str, SessionWidget] = {}
+        self.agent_widgets: dict[str, AgentWidget] = {}
         self.current_id: str = ""
         self.models: list[str] = self.engine.list_models()
 
@@ -148,7 +148,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_sessions(self) -> None:
         """加载所有会话"""
-        self.session_widgets.clear()
+        self.agent_widgets.clear()
 
         session_files: list[Path] = sorted(
             SESSION_DIR.glob("*.json"),
@@ -166,12 +166,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 agent_config = next(iter(self.agent_configs.values()))
 
             agent: BaseAgent = self.engine.create_agent_instance(agent_config, session)
-            self.add_session_widget(agent)
+            self.add_agent_widget(agent)
 
-        if not self.session_widgets:
+        if not self.agent_widgets:
             self.new_session()
         else:
-            self.current_id = next(iter(self.session_widgets.keys()))
+            self.current_id = next(iter(self.agent_widgets.keys()))
             self.switch_session(self.current_id)
 
         self.update_list()
@@ -181,7 +181,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session_list.clear()
 
         sorted_widgets = sorted(
-            self.session_widgets.values(),
+            self.agent_widgets.values(),
             key=lambda w: Path(SESSION_DIR, f"{w.agent.session.id}.json").stat().st_mtime,
             reverse=True
         )
@@ -229,27 +229,27 @@ class MainWindow(QtWidgets.QMainWindow):
         agent: BaseAgent = self.engine.create_agent_instance(selected_config, session)
         agent.save_session()
 
-        self.add_session_widget(agent)
+        self.add_agent_widget(agent)
         self.update_list()
         self.switch_session(session.id)
 
-    def add_session_widget(self, agent: BaseAgent) -> None:
+    def add_agent_widget(self, agent: BaseAgent) -> None:
         """添加会话窗口"""
-        widget: SessionWidget = SessionWidget(self.engine, agent, self.models)
+        widget: AgentWidget = AgentWidget(self.engine, agent, self.models)
         self.stacked_widget.addWidget(widget)
-        self.session_widgets[agent.session.id] = widget
+        self.agent_widgets[agent.session.id] = widget
 
     def switch_session(self, session_id: str) -> None:
         """根据ID切换会话"""
         self.current_id = session_id
 
-        widget: SessionWidget = self.session_widgets[session_id]
+        widget: AgentWidget = self.agent_widgets[session_id]
         self.stacked_widget.setCurrentWidget(widget)
         self.update_list()
 
     def rename_session(self, session_id: str) -> None:
         """重命名会话"""
-        widget: SessionWidget | None = self.session_widgets.get(session_id)
+        widget: AgentWidget | None = self.agent_widgets.get(session_id)
         if not widget:
             return
 
@@ -273,7 +273,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if reply == QtWidgets.QMessageBox.StandardButton.Yes:
             # 移除对应的控件
-            widget: SessionWidget = self.session_widgets.pop(session_id, None)
+            widget: AgentWidget = self.agent_widgets.pop(session_id, None)
             if widget:
                 # 从文件系统删除
                 widget.agent.delete_session()
@@ -283,8 +283,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # 如果删除的是当前会话，则切换到另一个会话
             if self.current_id == session_id:
-                if self.session_widgets:
-                    self.current_id = next(iter(self.session_widgets.keys()))
+                if self.agent_widgets:
+                    self.current_id = next(iter(self.agent_widgets.keys()))
                     self.switch_session(self.current_id)
                 else:
                     self.new_session()
