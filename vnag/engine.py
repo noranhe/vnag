@@ -1,16 +1,38 @@
+import json
+import inspect
+import importlib
+from pathlib import Path
 from collections.abc import Generator
 from uuid import uuid4
 
 from .gateway import BaseGateway
-from .object import Message, Request, Delta, Response, Usage, ToolCall, ToolResult, ToolSchema
+from .object import (
+    Message,
+    Request,
+    Delta,
+    Response,
+    Usage,
+    ToolCall,
+    ToolResult,
+    ToolSchema,
+    Session
+)
 from .constant import Role, FinishReason
 from .mcp import McpManager
 from .local import LocalManager
 from .tracer import LogTracer
+from .agent import AgentConfig, BaseAgent
+from .utility import AGENT_DIR
+
+
+AGENT_CONFIG_DIR: Path = AGENT_DIR.joinpath("agents")
+AGENT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class AgentEngine:
-    """Agent 引擎：负责对话管理和工具调用编排"""
+    """
+    Agent 引擎：负责Agent类的发现和注册，并提供Agent实例创建的工厂方法。
+    """
 
     def __init__(self, gateway: BaseGateway) -> None:
         """构造函数"""
@@ -24,10 +46,33 @@ class AgentEngine:
         self._local_tools: dict[str, ToolSchema] = {}
         self._mcp_tools: dict[str, ToolSchema] = {}
 
+        self._agent_classes: dict[str, type[BaseAgent]] = {}
+
     def init(self) -> None:
         """初始化引擎"""
         self._load_local_tools()
         self._load_mcp_tools()
+        self._load_agent_classes()
+
+    def _load_agent_classes(self) -> None:
+        """加载所有Agent类"""
+        from . import agents
+
+        for file in agents.__path__:
+            for path in Path(file).glob("*.py"):
+                if path.name == "__init__.py":
+                    continue
+
+                module_name: str = f".{path.stem}"
+                module = importlib.import_module(module_name, "vnag.agents")
+
+                for _, obj in inspect.getmembers(module):
+                    if (
+                        inspect.isclass(obj)
+                        and issubclass(obj, BaseAgent)
+                        and obj is not BaseAgent
+                    ):
+                        self._agent_classes[obj.__name__] = obj
 
     def _load_local_tools(self) -> None:
         """加载本地工具"""
@@ -49,18 +94,65 @@ class AgentEngine:
         """查询可用模型列表"""
         return self.gateway.list_models()
 
+    def load_agent_configs(self) -> dict[str, AgentConfig]:
+        """从JSON文件加载所有Agent配置模板。"""
+        configs: dict[str, AgentConfig] = {}
+
+        for file_path in AGENT_CONFIG_DIR.glob("*.json"):
+            with open(file_path, encoding="UTF-8") as f:
+                data: dict = json.load(f)
+                config: AgentConfig = AgentConfig.model_validate(data)
+                configs[config.id] = config
+
+        return configs
+
+    def save_agent_config(self, config: AgentConfig) -> None:
+        """保存一个Agent配置模板到JSON。"""
+        data: dict[str, AgentConfig] = config.model_dump()
+
+        file_path = AGENT_CONFIG_DIR.joinpath(f"{config.id}.json")
+
+        with open(file_path, "w", encoding="UTF-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+
+    def delete_agent_config(self, agent_id: str) -> None:
+        """删除一个Agent配置模板。"""
+        file_path = AGENT_CONFIG_DIR.joinpath(f"{agent_id}.json")
+
+        if file_path.exists():
+            file_path.unlink()
+
+    def create_agent_instance(self, config: AgentConfig, session: Session) -> BaseAgent:
+        """【核心工厂方法】根据配置和会话，创建一个全新的Agent实例。"""
+        agent_class = self._agent_classes.get(config.agent_type)
+
+        if not agent_class:
+            raise ValueError(f"Agent class {config.agent_type} not found.")
+
+        return agent_class(self, config, session)
+
     def _prepare_request(
         self,
         messages: list[Message],
         model: str,
+        tool_names: list[str] | None,
         temperature: float | None,
         max_tokens: int | None
     ) -> Request:
         """准备 LLM 请求对象"""
+        tool_schemas: list[ToolSchema] = []
+
+        # 筛选出需要使用的工具
+        if tool_names:
+            all_schemas: list[ToolSchema] = self.get_all_tool_schemas()
+            for schema in all_schemas:
+                if schema.name in tool_names:
+                    tool_schemas.append(schema)
+
         request: Request = Request(
             model=model,
             messages=messages,
-            tools_schemas=self.get_all_tool_schemas(),
+            tools_schemas=tool_schemas,
             temperature=temperature,
             max_tokens=max_tokens
         )
@@ -93,17 +185,20 @@ class AgentEngine:
         self,
         messages: list[Message],
         model: str,
+        tool_names: list[str] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         max_iterations: int = 10
     ) -> Generator[Delta, None, None]:
-        """流式对话接口，通过生成器（Generator）实时返回 AI 的思考和回复。
+        """
+        流式对话接口，通过生成器（Generator）实时返回 AI 的思考和回复。
 
         函数会处理与大模型的多次交互，直到最终回复完成或者工具调用达到上限。
 
         Args:
             messages (list[Message]): 当前的对话历史消息列表。
             model (str): 需要使用的语言模型。
+            tool_names (list[str] | None): 需要使用的工具名称列表。
             temperature (float | None): 生成文本的温度参数，控制随机性。
             max_tokens (int | None): 单次生成最大票据（Token）数量。
             max_iterations (int): 最大工具调用循环次数，防止无限循环。
@@ -125,6 +220,7 @@ class AgentEngine:
             request: Request = self._prepare_request(
                 messages=working_messages,
                 model=model,
+                tool_names=tool_names,
                 temperature=temperature,
                 max_tokens=max_tokens
             )
@@ -219,6 +315,7 @@ class AgentEngine:
         self,
         messages: list[Message],
         model: str,
+        tool_names: list[str] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None
     ) -> Response:
@@ -231,6 +328,7 @@ class AgentEngine:
         Args:
             messages (list[Message]): 当前的对话历史消息列表。
             model (str): 需要使用的语言模型。
+            tool_names (list[str] | None): 需要使用的工具名称列表。
             temperature (float | None): 生成文本的温度参数，控制随机性。
             max_tokens (int | None): 单次生成最大票据（Token）数量。
 
@@ -242,8 +340,7 @@ class AgentEngine:
         total_usage: Usage = Usage()
 
         # 遍历 stream 方法返回的生成器，消费所有 Delta 数据
-        for delta in self.stream(messages, model, temperature, max_tokens):
-            # 记录ID
+        for delta in self.stream(messages, model, tool_names, temperature, max_tokens):
             if delta.id:
                 response_id = delta.id
 

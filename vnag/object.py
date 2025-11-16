@@ -59,6 +59,7 @@ class Session(BaseModel):
     """聊天交互会话历史"""
     id: str
     name: str
+    agent: str
     messages: list[Message] = Field(default_factory=list)
     model: str = ""
 

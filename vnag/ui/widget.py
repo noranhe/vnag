@@ -6,7 +6,8 @@ from pathlib import Path
 
 from ..constant import Role
 from ..engine import AgentEngine
-from ..object import Message, Request, Session, ToolSchema
+from ..object import Message, Session, ToolSchema
+from ..agent import AgentConfig, BaseAgent
 
 from .qt import (
     QtCore,
@@ -128,10 +129,12 @@ class HistoryWidget(QtWebEngineWidgets.QWebEngineView):
 class SessionWidget(QtWidgets.QWidget):
     """会话控件"""
 
+    set_name_signal: QtCore.Signal = QtCore.Signal()
+
     def __init__(
         self,
         engine: AgentEngine,
-        session: Session,
+        agent: BaseAgent,
         models: list[str],
         parent: QtWidgets.QWidget | None = None
     ) -> None:
@@ -139,7 +142,8 @@ class SessionWidget(QtWidgets.QWidget):
         super().__init__(parent)
 
         self.engine: AgentEngine = engine
-        self.session: Session = session
+        self.agent: BaseAgent = agent
+        self.session: Session = agent.session
         self.models: list[str] = models
 
         self.init_ui()
@@ -220,23 +224,15 @@ class SessionWidget(QtWidgets.QWidget):
             return
         self.input_widget.clear()
 
-        user_message: Message = Message(role=Role.USER, content=text)
-        self.session.messages.append(user_message)
-        self.history_widget.append_message(user_message.role, user_message.content)
-
+        # 将用户输入添加到UI历史
+        self.history_widget.append_message(Role.USER, text)
         self.history_widget.start_stream()
 
         self.send_button.setEnabled(False)
         self.resend_button.setEnabled(False)
         self.delete_button.setEnabled(False)
 
-        request: Request = Request(
-            model=model,
-            messages=self.session.messages,
-            temperature=0.2
-        )
-
-        worker: StreamWorker = StreamWorker(self.engine, request)
+        worker: StreamWorker = StreamWorker(self.agent, text)
         worker.signals.delta.connect(self.on_stream_delta)
         worker.signals.finished.connect(self.on_stream_finished)
         worker.signals.error.connect(self.on_stream_error)
@@ -258,28 +254,30 @@ class SessionWidget(QtWidgets.QWidget):
 
     def delete_round(self) -> None:
         """删除最后一轮对话"""
-        if not self.session.messages or self.session.messages[-1].role != Role.ASSISTANT:
+        messages: list[Message] = self.session.messages
+        if not messages or messages[-1].role != Role.ASSISTANT:
             return
 
-        self.session.messages.pop()
-        self.session.messages.pop()
+        messages.pop()
+        messages.pop()
 
         self.display_history()
-        self.save_session()
+        self.agent.save_session()
 
     def resend_round(self) -> None:
         """重新发送最后一轮对话"""
-        if not self.session.messages or self.session.messages[-1].role != Role.ASSISTANT:
+        messages: list[Message] = self.agent.session.messages
+        if not messages or messages[-1].role != Role.ASSISTANT:
             return
 
-        user_message: Message = self.session.messages[-2]
+        user_message: Message = messages[-2]
         self.input_widget.setText(user_message.content)
 
-        self.session.messages.pop()
-        self.session.messages.pop()
+        messages.pop()
+        messages.pop()
 
         self.display_history()
-        self.save_session()
+        self.agent.save_session()
 
     def update_buttons(self) -> None:
         """更新功能按钮状态"""
@@ -308,14 +306,7 @@ class SessionWidget(QtWidgets.QWidget):
     def on_stream_finished(self) -> None:
         """处理数据流结束事件"""
         self.send_button.setEnabled(True)
-
-        full_content: str = self.history_widget.finish_stream()
-
-        if full_content:
-            message: Message = Message(role=Role.ASSISTANT, content=full_content)
-            self.session.messages.append(message)
-
-        self.save_session()
+        self.history_widget.finish_stream()
         self.update_buttons()
 
     def on_stream_error(self, error_msg: str) -> None:
@@ -328,8 +319,162 @@ class SessionWidget(QtWidgets.QWidget):
         """处理模型变更"""
         model: str = self.model_line.text()
         if model in self.models:
-            self.session.model = model
-            self.save_session()
+            self.agent.session.model = model
+            self.agent.save_session()
+
+
+class AgentsDialog(QtWidgets.QDialog):
+    """智能体管理界面"""
+    def __init__(self, engine: AgentEngine, parent: QtWidgets.QWidget | None = None):
+        """"""
+        super().__init__(parent)
+
+        self.engine: AgentEngine = engine
+        self.agent_configs: dict[str, AgentConfig] = self.engine.load_agent_configs()
+
+        self.init_ui()
+
+    def init_ui(self) -> None:
+        """"""
+        self.setWindowTitle("智能体管理")
+        self.setMinimumSize(1000, 600)
+
+        # Left list widget
+        self.agent_list: QtWidgets.QListWidget = QtWidgets.QListWidget()
+        self.agent_list.itemClicked.connect(self.on_agent_selected)
+        for config in self.agent_configs.values():
+            item = QtWidgets.QListWidgetItem(config.name, self.agent_list)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, config.id)
+
+        # Right form layout
+        self.name_line: QtWidgets.QLineEdit = QtWidgets.QLineEdit()
+        self.type_combo: QtWidgets.QComboBox = QtWidgets.QComboBox()
+        self.type_combo.addItems(self.engine.agent_classes.keys())
+        self.prompt_text: QtWidgets.QTextEdit = QtWidgets.QTextEdit()
+
+        all_tools: list[str] = [schema.name for schema in self.engine.get_all_tool_schemas()]
+        self.tool_buttons: dict[str, QtWidgets.QCheckBox] = {}
+        tool_layout = QtWidgets.QVBoxLayout()
+        for tool_name in all_tools:
+            button = QtWidgets.QCheckBox(tool_name)
+            self.tool_buttons[tool_name] = button
+            tool_layout.addWidget(button)
+
+        tool_widget = QtWidgets.QWidget()
+        tool_widget.setLayout(tool_layout)
+
+        tool_area = QtWidgets.QScrollArea()
+        tool_area.setWidgetResizable(True)
+        tool_area.setWidget(tool_widget)
+
+        form: QtWidgets.QFormLayout = QtWidgets.QFormLayout()
+        form.addRow("名称", self.name_line)
+        form.addRow("类型", self.type_combo)
+        form.addRow("系统提示词", self.prompt_text)
+        form.addRow("可用工具", tool_area)
+
+        right_widget: QtWidgets.QWidget = QtWidgets.QWidget()
+        right_widget.setLayout(form)
+
+        # Splitter
+        splitter = QtWidgets.QSplitter()
+        splitter.addWidget(self.agent_list)
+        splitter.addWidget(right_widget)
+        splitter.setSizes([200, 800])
+
+        # Buttons
+        self.add_button: QtWidgets.QPushButton = QtWidgets.QPushButton("新建")
+        self.add_button.clicked.connect(self.add_agent)
+
+        self.save_button: QtWidgets.QPushButton = QtWidgets.QPushButton("保存")
+        self.save_button.clicked.connect(self.save_agent)
+
+        self.delete_button: QtWidgets.QPushButton = QtWidgets.QPushButton("删除")
+        self.delete_button.clicked.connect(self.delete_agent)
+
+        hbox = QtWidgets.QHBoxLayout()
+        hbox.addWidget(self.add_button)
+        hbox.addWidget(self.save_button)
+        hbox.addWidget(self.delete_button)
+
+        vbox = QtWidgets.QVBoxLayout()
+        vbox.addWidget(splitter)
+        vbox.addLayout(hbox)
+        self.setLayout(vbox)
+
+    def on_agent_selected(self, item: QtWidgets.QListWidgetItem) -> None:
+        """显示选中智能体的配置"""
+        agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        config: AgentConfig = self.agent_configs[agent_id]
+
+        self.name_line.setText(config.name)
+        self.type_combo.setCurrentText(config.agent_type)
+        self.prompt_text.setPlainText(config.system_prompt)
+
+        for name, button in self.tool_buttons.items():
+            button.setChecked(name in config.tools)
+
+    def add_agent(self) -> None:
+        """新建智能体配置"""
+        config = AgentConfig(name="未命名", agent_type="ChatAgent")
+        self.engine.save_agent_config(config)
+
+        self.agent_configs[config.id] = config
+        item = QtWidgets.QListWidgetItem(config.name, self.agent_list)
+        item.setData(QtCore.Qt.ItemDataRole.UserRole, config.id)
+        self.agent_list.setCurrentItem(item)
+        self.on_agent_selected(item)
+
+    def save_agent(self) -> None:
+        """保存智能体配置"""
+        item: QtWidgets.QListWidgetItem = self.agent_list.currentItem()
+        if not item:
+            return
+
+        agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        config: AgentConfig = self.agent_configs[agent_id]
+
+        config.name = self.name_line.text()
+        item.setText(config.name)
+
+        config.agent_type = self.type_combo.currentText()
+        config.system_prompt = self.prompt_text.toPlainText()
+
+        selected_tools: list[str] = []
+        for name, button in self.tool_buttons.items():
+            if button.isChecked():
+                selected_tools.append(name)
+        config.tools = selected_tools
+
+        self.engine.save_agent_config(config)
+        QtWidgets.QMessageBox.information(self, "成功", "智能体配置已保存！")
+
+    def delete_agent(self) -> None:
+        """删除智能体配置"""
+        item: QtWidgets.QListWidgetItem = self.agent_list.currentItem()
+        if not item:
+            return
+
+        reply: QtWidgets.QMessageBox.StandardButton = QtWidgets.QMessageBox.question(
+            self,
+            "删除配置",
+            "确定要删除该智能体配置吗？",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+
+        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+            agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
+
+            self.agent_configs.pop(agent_id)
+            self.engine.delete_agent_config(agent_id)
+
+            self.agent_list.takeItem(self.agent_list.row(item))
+
+            self.name_line.clear()
+            self.prompt_text.clear()
+            for button in self.tool_buttons.values():
+                button.setChecked(False)
 
 
 class ToolsDialog(QtWidgets.QDialog):
