@@ -1,9 +1,12 @@
 import json
 import inspect
 import importlib
+import traceback
 from pathlib import Path
+from typing import Any
 from collections.abc import Generator
-from uuid import uuid4
+from glob import glob
+from types import ModuleType
 
 from .gateway import BaseGateway
 from .object import (
@@ -55,24 +58,34 @@ class AgentEngine:
         self._load_agent_classes()
 
     def _load_agent_classes(self) -> None:
-        """加载所有Agent类"""
-        from . import agents
+        """加载所有智能体类"""
+        path_1: Path = Path(__file__).parent.joinpath("agents")
+        self._load_agent_classes_from_folder(path_1, "vnag.agents")
 
-        for file in agents.__path__:
-            for path in Path(file).glob("*.py"):
-                if path.name == "__init__.py":
-                    continue
+        path_2: Path = Path.cwd().joinpath("agents")
+        self._load_agent_classes_from_folder(path_2, "agents")
 
-                module_name: str = f".{path.stem}"
-                module = importlib.import_module(module_name, "vnag.agents")
+    def _load_agent_classes_from_folder(self, folder_path: Path, module_name: str) -> None:
+        """从文件夹加载智能体类"""
+        pathname: str = str(folder_path.joinpath("*.py"))
 
-                for _, obj in inspect.getmembers(module):
-                    if (
-                        inspect.isclass(obj)
-                        and issubclass(obj, BaseAgent)
-                        and obj is not BaseAgent
-                    ):
-                        self._agent_classes[obj.__name__] = obj
+        for filepath in glob(pathname):
+            filename: str = Path(filepath).stem
+            name: str = f"{module_name}.{filename}"
+            self._load_agent_classes_from_module(name)
+
+    def _load_agent_classes_from_module(self, module_name: str) -> None:
+        """从模块加载智能体类"""
+        try:
+            module: ModuleType = importlib.import_module(module_name)
+
+            for name in dir(module):
+                value: Any = getattr(module, name)
+                if isinstance(value, type) and issubclass(value, BaseAgent):
+                    self._agent_classes[value.__name__] = value
+        except Exception:
+            msg: str = f"Agent class [{module_name}] load failed: {traceback.format_exc()}"
+            print(msg)
 
     def _load_local_tools(self) -> None:
         """加载本地工具"""
