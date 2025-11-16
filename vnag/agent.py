@@ -61,14 +61,14 @@ class BaseAgent(ABC):
             file_path.unlink()
 
     @abstractmethod
-    def stream(self, user_input: str, **kwargs) -> Generator[Delta, None, None]:
+    def stream(self, prompt: str) -> Generator[Delta, None, None]:
         """
         所有Agent子类必须实现的流式执行接口。
         """
         pass
 
     @abstractmethod
-    def invoke(self, user_input: str, **kwargs) -> Response:
+    def invoke(self, prompt: str) -> Response:
         """
         所有Agent子类必须实现的阻塞式执行接口。
         """
