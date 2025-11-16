@@ -12,13 +12,13 @@ from .object import (
     Usage, ToolCall, ToolResult, ToolSchema
 )
 from .constant import Role, FinishReason
-from .utility import AGENT_DIR
+from .utility import WORKING_DIR
 
 if TYPE_CHECKING:
     from .engine import AgentEngine
 
 
-SESSION_DIR: Path = AGENT_DIR.joinpath("session")
+SESSION_DIR: Path = WORKING_DIR.joinpath("session")
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 

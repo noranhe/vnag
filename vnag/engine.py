@@ -25,10 +25,10 @@ from .mcp import McpManager
 from .local import LocalManager
 from .tracer import LogTracer
 from .agent import AgentConfig, BaseAgent
-from .utility import AGENT_DIR
+from .utility import WORKING_DIR
 
 
-AGENT_CONFIG_DIR: Path = AGENT_DIR.joinpath("agents")
+AGENT_CONFIG_DIR: Path = WORKING_DIR.joinpath("agents")
 AGENT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 

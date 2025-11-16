@@ -14,7 +14,7 @@ def _get_agent_dir(temp_name: str) -> tuple[Path, Path]:
     if temp_path.exists():
         return cwd, temp_path
 
-    # 否则使用系统家目录
+    # 否则使用系统用户目录
     home_path: Path = Path.home()
     temp_path = home_path.joinpath(temp_name)
 
@@ -25,8 +25,8 @@ def _get_agent_dir(temp_name: str) -> tuple[Path, Path]:
     return home_path, temp_path
 
 
-AGENT_DIR, TEMP_DIR = _get_agent_dir(".vnag")
-sys.path.append(str(AGENT_DIR))
+WORKING_DIR, TEMP_DIR = _get_agent_dir(".vnag")
+sys.path.append(str(WORKING_DIR))
 
 
 def get_file_path(filename: str) -> Path:

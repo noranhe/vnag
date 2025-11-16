@@ -2,7 +2,7 @@ from pathlib import Path
 import json
 
 from ..engine import AgentEngine
-from ..utility import AGENT_DIR
+from ..utility import WORKING_DIR
 from ..object import Session
 from ..agent import AgentConfig, BaseAgent
 from .. import __version__
@@ -10,7 +10,7 @@ from .widget import AgentWidget, ToolsDialog, ModelsDialog, AgentsDialog
 from .qt import QtWidgets, QtGui, QtCore
 
 
-SESSION_DIR = AGENT_DIR.joinpath("session")
+SESSION_DIR = WORKING_DIR.joinpath("session")
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -33,7 +33,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def init_ui(self) -> None:
         """初始化UI"""
-        self.setWindowTitle(f"VeighNa Agent - {__version__} - [ {AGENT_DIR} ]")
+        self.setWindowTitle(f"VeighNa Agent - {__version__} - [ {WORKING_DIR} ]")
 
         self.init_menu()
         self.init_widgets()
@@ -301,7 +301,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "\n"
                 f"版本号：{__version__}\n"
                 "\n"
-                f"运行目录：{AGENT_DIR}"
+                f"运行目录：{WORKING_DIR}"
             ),
             QtWidgets.QMessageBox.StandardButton.Ok
         )
