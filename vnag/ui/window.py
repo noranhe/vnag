@@ -164,6 +164,9 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog: ModelDialog = ModelDialog(self.engine, self)
         dialog.exec()
 
+        for agent_widget in self.agent_widgets.values():
+            agent_widget.load_favorite_models()
+
     def load_data(self) -> None:
         """加载智能体配置和所有会话"""
         self.update_profile_combo()

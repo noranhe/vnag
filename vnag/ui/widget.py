@@ -147,6 +147,7 @@ class AgentWidget(QtWidgets.QWidget):
         self.models: list[str] = models
 
         self.init_ui()
+        self.load_favorite_models()
         self.display_history()
 
     def init_ui(self) -> None:
@@ -184,7 +185,6 @@ class AgentWidget(QtWidgets.QWidget):
         self.model_combo.setFixedWidth(300)
         self.model_combo.setFixedHeight(50)
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
-        self.load_favorite_models()
 
         hbox = QtWidgets.QHBoxLayout()
         hbox.addStretch()
@@ -295,14 +295,28 @@ class AgentWidget(QtWidgets.QWidget):
 
     def load_favorite_models(self) -> None:
         """加载常用模型"""
+        current_text: str = self.model_combo.currentText()
+
+        # 阻止信号重复触发on_model_changed
+        self.model_combo.blockSignals(True)
+
         self.model_combo.clear()
         favorite_models: list[str] = load_favorite_models()
         self.model_combo.addItems(favorite_models)
 
-        if self.agent.model in favorite_models:
+        # 恢复之前的选项
+        if current_text in favorite_models:
+            self.model_combo.setCurrentText(current_text)
+        elif self.agent.model in favorite_models:
             self.model_combo.setCurrentText(self.agent.model)
         elif favorite_models:
             self.model_combo.setCurrentIndex(0)
+
+        self.model_combo.blockSignals(False)
+
+        # 如果模型选择在刷新后发生了变化，则手动同步到Agent
+        if self.model_combo.currentText() != self.agent.model:
+            self.on_model_changed(self.model_combo.currentText())
 
 
 class ProfileDialog(QtWidgets.QDialog):
@@ -872,6 +886,7 @@ class ModelDialog(QtWidgets.QDialog):
 
         save_favorite_models(models)
         QtWidgets.QMessageBox.information(self, "成功", "常用模型配置已保存！")
+
         self.close()
 
     def add_model(self) -> None:
