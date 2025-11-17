@@ -19,6 +19,14 @@ from .agent import Profile, TaskAgent
 from .utility import PROFILE_DIR, SESSION_DIR
 
 
+# 默认智能体配置
+default_profile: Profile = Profile(
+    name="聊天助手",
+    prompt="你是一个乐于助人的聊天助手，请根据用户的问题回答。",
+    tools=[]
+)
+
+
 class AgentEngine:
     """
     智能体引擎：负责智能体类的发现和注册，并提供智能体实例创建的工厂方法。
@@ -58,7 +66,11 @@ class AgentEngine:
             self._mcp_tools[schema.name] = schema
 
     def _load_profiles(self) -> None:
-        """从JSON文件加载所有Agent配置模板。"""
+        """加载智能体配置"""
+        # 添加默认智能体配置
+        self._profiles[default_profile.name] = default_profile
+
+        # 加载用户自定义配置
         for file_path in PROFILE_DIR.glob("*.json"):
             with open(file_path, encoding="UTF-8") as f:
                 data: dict = json.load(f)
@@ -130,7 +142,11 @@ class AgentEngine:
         session_id: str = now.strftime("%Y%m%d_%H%M%S_%f")
 
         # 创建会话
-        session: Session = Session(id=session_id, profile=profile.name)
+        session: Session = Session(
+            id=session_id,
+            profile=profile.name,
+            name="默认会话"
+        )
 
         # 创建智能体
         agent: TaskAgent = TaskAgent(self, profile, session)

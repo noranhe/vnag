@@ -4,7 +4,7 @@ import uuid
 from collections import defaultdict
 
 from ..constant import Role
-from ..engine import AgentEngine
+from ..engine import AgentEngine, default_profile
 from ..object import ToolSchema
 from ..agent import Profile, TaskAgent
 
@@ -21,9 +21,11 @@ from .worker import StreamWorker
 class HistoryWidget(QtWebEngineWidgets.QWebEngineView):
     """会话历史控件"""
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(self,  profile_name: str, parent: QtWidgets.QWidget | None = None) -> None:
         """构造函数"""
         super().__init__(parent)
+
+        self.profile_name: str = profile_name
 
         # 设置页面背景色为透明，避免首次加载时闪烁
         self.page().setBackgroundColor(QtGui.QColor("transparent"))
@@ -93,7 +95,8 @@ class HistoryWidget(QtWebEngineWidgets.QWebEngineView):
         # AI消息，需要被渲染
         elif role is Role.ASSISTANT:
             js_content = json.dumps(content)
-            self.page().runJavaScript(f"appendAssistantMessage({js_content})")
+            js_name: str = json.dumps(self.profile_name)
+            self.page().runJavaScript(f"appendAssistantMessage({js_content}, {js_name})")
 
     def start_stream(self) -> None:
         """开始新的流式输出"""
@@ -102,7 +105,8 @@ class HistoryWidget(QtWebEngineWidgets.QWebEngineView):
         self.msg_id = f"msg-{uuid.uuid4().hex}"
 
         # 调用前端函数，开始新的流式输出
-        self.page().runJavaScript(f"startAssistantMessage('{self.msg_id}')")
+        js_name: str = json.dumps(self.profile_name)
+        self.page().runJavaScript(f"startAssistantMessage('{self.msg_id}', {js_name})")
 
     def update_stream(self, content_delta: str) -> None:
         """更新流式输出"""
@@ -153,7 +157,7 @@ class AgentWidget(QtWidgets.QWidget):
         self.input_widget.setPlaceholderText("在这里输入消息，按下回车或者点击按钮发送")
         self.input_widget.installEventFilter(self)
 
-        self.history_widget: HistoryWidget = HistoryWidget()
+        self.history_widget: HistoryWidget = HistoryWidget(profile_name=self.agent.profile.name)
 
         button_width: int = 80
         button_height: int = 50
@@ -513,6 +517,10 @@ class ProfileDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(self, "错误", "名称不能为空！")
             return
 
+        if name == default_profile.name:
+            QtWidgets.QMessageBox.warning(self, "错误", "默认智能体配置不能修改！")
+            return
+
         prompt: str = self.prompt_text.toPlainText()
         if not prompt:
             QtWidgets.QMessageBox.warning(self, "错误", "系统提示词不能为空！")
@@ -567,9 +575,14 @@ class ProfileDialog(QtWidgets.QDialog):
 
     def delete_profile(self) -> None:
         """删除智能体配置"""
-        item: QtWidgets.QListWidgetItem = self.profile_list.currentItem()
+        item: QtWidgets.QListWidgetItem | None = self.profile_list.currentItem()
+        if not item:
+            return
 
         profile_name: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if profile_name == default_profile.name:
+            QtWidgets.QMessageBox.warning(self, "错误", "默认智能体配置不能删除！")
+            return
 
         # 检查智能体依赖
         agents: list[TaskAgent] = self.engine.get_all_agents()

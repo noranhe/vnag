@@ -49,6 +49,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.new_button.clicked.connect(self.new_agent_widget)
 
         self.profile_combo: QtWidgets.QComboBox = QtWidgets.QComboBox()
+        self.profile_combo.setEditable(True)
+        self.profile_combo.lineEdit().setReadOnly(True)
+        self.profile_combo.lineEdit().setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        self.profile_model: QtGui.QStandardItemModel = QtGui.QStandardItemModel()
+        self.profile_combo.setModel(self.profile_model)
 
         self.session_list: QtWidgets.QListWidget = QtWidgets.QListWidget()
 
@@ -76,18 +82,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session_list.customContextMenuRequested.connect(self.on_menu_requested)
         self.session_list.installEventFilter(self)
 
-        hbox: QtWidgets.QHBoxLayout = QtWidgets.QHBoxLayout()
-        hbox.addWidget(QtWidgets.QLabel("智能体配置"))
-        hbox.addWidget(self.profile_combo)
+        form: QtWidgets.QFormLayout = QtWidgets.QFormLayout()
+        form.addRow("智能体", self.profile_combo)
 
         left_vbox: QtWidgets.QVBoxLayout = QtWidgets.QVBoxLayout()
         left_vbox.addWidget(self.session_list)
-        left_vbox.addLayout(hbox)
+        left_vbox.addLayout(form)
         left_vbox.addWidget(self.new_button)
 
         left_widget: QtWidgets.QWidget = QtWidgets.QWidget()
         left_widget.setLayout(left_vbox)
-        left_widget.setFixedWidth(300)
+        left_widget.setFixedWidth(350)
 
         # 右侧聊天相关
         self.stacked_widget: QtWidgets.QStackedWidget = QtWidgets.QStackedWidget()
@@ -123,14 +128,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # 记录当前选中项的名称
         current_name: str = self.profile_combo.currentText()
 
-        # 清空下拉框
-        self.profile_combo.clear()
+        # 清空模型
+        self.profile_model.clear()
 
         # 加载所有智能体配置
         profiles: list[Profile] = self.engine.get_all_profiles()
-        profile_names: list[str] = [profile.name for profile in profiles]
-        profile_names.sort()
-        self.profile_combo.addItems(profile_names)
+        profile_names: list[str] = sorted([p.name for p in profiles])
+
+        for name in profile_names:
+            item = QtGui.QStandardItem(name)
+            item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.profile_model.appendRow(item)
 
         # 设置当前选中项
         if current_name in profile_names:
