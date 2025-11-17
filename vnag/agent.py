@@ -9,7 +9,7 @@ from .object import (
     Usage, ToolCall, ToolResult, ToolSchema
 )
 from .constant import Role, FinishReason
-from .utility import WORKING_DIR, SESSION_DIR
+from .utility import SESSION_DIR
 
 if TYPE_CHECKING:
     from .engine import AgentEngine

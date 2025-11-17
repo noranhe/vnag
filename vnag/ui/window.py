@@ -1,9 +1,7 @@
-from pathlib import Path
-import json
+
 
 from ..engine import AgentEngine
 from ..utility import WORKING_DIR
-from ..object import Session
 from ..agent import Profile, TaskAgent
 from .. import __version__
 from .widget import AgentWidget, ToolDialog, ModelDialog, ProfileDialog
@@ -22,8 +20,6 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
 
         self.engine: AgentEngine = engine
-
-        self.agent_profiles: dict[str, Profile] = {}
 
         self.agent_widgets: dict[str, AgentWidget] = {}
 
@@ -52,6 +48,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.new_button.setFixedHeight(50)
         self.new_button.clicked.connect(self.new_agent_widget)
 
+        self.profile_combo: QtWidgets.QComboBox = QtWidgets.QComboBox()
+
         self.session_list: QtWidgets.QListWidget = QtWidgets.QListWidget()
 
         # 设置自定义样式表
@@ -78,8 +76,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session_list.customContextMenuRequested.connect(self.on_menu_requested)
         self.session_list.installEventFilter(self)
 
+        hbox: QtWidgets.QHBoxLayout = QtWidgets.QHBoxLayout()
+        hbox.addWidget(QtWidgets.QLabel("智能体配置"))
+        hbox.addWidget(self.profile_combo)
+
         left_vbox: QtWidgets.QVBoxLayout = QtWidgets.QVBoxLayout()
         left_vbox.addWidget(self.session_list)
+        left_vbox.addLayout(hbox)
         left_vbox.addWidget(self.new_button)
 
         left_widget: QtWidgets.QWidget = QtWidgets.QWidget()
@@ -115,13 +118,33 @@ class MainWindow(QtWidgets.QMainWindow):
         help_menu.addAction("官网", self.open_website)
         help_menu.addAction("关于", self.show_about)
 
+    def update_profile_combo(self) -> None:
+        """更新智能体配置下拉框"""
+        # 记录当前选中项的名称
+        current_name: str = self.profile_combo.currentText()
+
+        # 清空下拉框
+        self.profile_combo.clear()
+
+        # 加载所有智能体配置
+        profiles: list[Profile] = self.engine.get_all_profiles()
+        profile_names: list[str] = [profile.name for profile in profiles]
+        profile_names.sort()
+        self.profile_combo.addItems(profile_names)
+
+        # 设置当前选中项
+        if current_name in profile_names:
+            self.profile_combo.setCurrentText(current_name)
+        else:
+            self.profile_combo.setCurrentIndex(0)
+
     def show_profile_dialog(self) -> None:
         """显示智能体管理界面"""
         dialog: ProfileDialog = ProfileDialog(self.engine, self)
         dialog.exec()
 
         # 重新加载智能体配置
-        self.agent_profiles = self.engine.load_agent_profiles()
+        self.update_profile_combo()
 
     def show_tool_dialog(self) -> None:
         """显示工具"""
@@ -135,16 +158,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_data(self) -> None:
         """加载智能体配置和所有会话"""
-        self.agent_profiles = self.engine.load_agent_profiles()
-
-        # 如果没有任何Agent配置，则创建一个默认的
-        if not self.agent_profiles:
-            default_config: Profile = Profile(
-                name="通用聊天助手",
-                system_prompt="你是一个乐于助人的人工智能助手。"
-            )
-            self.engine.save_agent_profile(default_config)
-            self.agent_profiles[default_config.id] = default_config
+        self.update_profile_combo()
 
         self.load_agent_widgets()
 
@@ -185,37 +199,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def new_agent_widget(self) -> None:
         """创建新会话"""
-        # 如果没有Agent配置则返回
-        if not self.agent_profiles:
-            QtWidgets.QMessageBox.warning(self, "创建失败", "请先在“功能”->“管理智能体”中创建一个智能体配置。")
+        # 获取当前选中的智能体配置名称
+        name: str = self.profile_combo.currentText()
+        if not name:
+            QtWidgets.QMessageBox.warning(self, "错误", "请先选择一个智能体配置")
             return
 
-        # 让用户选择一个Agent配置
-        agent_names: list[str] = [config.name for config in self.agent_profiles.values()]
-        name, ok = QtWidgets.QInputDialog.getItem(
-            self,
-            "选择智能体",
-            "请选择要用于新会话的智能体：",
-            agent_names,
-            0,
-            False
-        )
-        if not (ok and name):
+        # 获取智能体配置
+        profile: Profile | None = self.engine.get_profile(name)
+        if not profile:
+            QtWidgets.QMessageBox.warning(self, "错误", f"找不到智能体配置：{name}")
             return
 
-        selected_config: Profile | None = None
-        for config in self.agent_profiles.values():
-            if config.name == name:
-                selected_config = config
-                break
-
-        if not selected_config:
-            return
-
-        # 创建新Session和Agent实例
-        agent: TaskAgent = self.engine.create_agent(selected_config)
-
+        # 创建新智能体和窗口
+        agent: TaskAgent = self.engine.create_agent(profile)
         self.add_agent_widget(agent)
+
+        # 更新列表并切换到新窗口
         self.update_agent_list()
         self.switch_agent_widget(agent.id)
 
