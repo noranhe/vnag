@@ -100,8 +100,15 @@
                 const messageDiv = document.getElementById(msgId);
                 if (messageDiv) {
                     const contentDiv = messageDiv.querySelector('.message-content');
+
+                    const el = document.documentElement;
+                    const isScrolledToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 1;
+
                     contentDiv.innerHTML = md.render(markdownContent);
-                    scrollToBottom();
+
+                    if (isScrolledToBottom) {
+                        window.scrollTo(0, document.body.scrollHeight);
+                    }
                 }
             }
 
