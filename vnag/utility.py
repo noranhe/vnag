@@ -92,3 +92,10 @@ def write_text_file(path: str | Path, content: str) -> None:
     """写入文本文件，使用 UTF-8 编码（覆盖写）。"""
     p: Path = Path(path)
     p.write_text(content, encoding="utf-8")
+
+
+PROFILE_DIR: Path = TEMP_DIR.joinpath("profiles")
+PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+
+SESSION_DIR: Path = TEMP_DIR.joinpath("sessions")
+SESSION_DIR.mkdir(parents=True, exist_ok=True)

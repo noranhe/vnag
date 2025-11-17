@@ -9,14 +9,10 @@ from .object import (
     Usage, ToolCall, ToolResult, ToolSchema
 )
 from .constant import Role, FinishReason
-from .utility import WORKING_DIR
+from .utility import WORKING_DIR, SESSION_DIR
 
 if TYPE_CHECKING:
     from .engine import AgentEngine
-
-
-SESSION_DIR: Path = WORKING_DIR.joinpath("session")
-SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class TaskAgent:
@@ -30,11 +26,18 @@ class TaskAgent:
         self.profile: Profile = profile
         self.session: Session = session
 
-        # 更新会话所用的智能体配置
-        self.session.profile = self.profile.name
+        # 新会话自动添加系统提示词并保存
+        if not self.session.messages:
+            system_message: Message = Message(
+                role=Role.SYSTEM,
+                content=self.profile.prompt
+            )
+            self.session.messages.append(system_message)
 
-    def save_session(self) -> None:
-        """将会话状态保存到文件。"""
+            self._save_session()
+
+    def _save_session(self) -> None:
+        """保存会话状态到文件"""
         data: dict = self.session.model_dump()
         file_path: Path = SESSION_DIR.joinpath(f"{self.session.id}.json")
 
@@ -46,22 +49,13 @@ class TaskAgent:
                 ensure_ascii=False
             )
 
-    def delete_session(self) -> None:
-        """从文件系统删除会话文件。"""
-        file_path: Path = SESSION_DIR.joinpath(f"{self.session.id}.json")
-
-        if file_path.exists():
-            file_path.unlink()
-
     def stream(self, prompt: str) -> Generator[Delta, None, None]:
         """流式生成"""
-        # 添加系统提示词
-        if not self.session.messages:
-            system_message: Message = Message(role=Role.SYSTEM, content=self.profile.prompt)
-            self.session.messages.append(system_message)
-
         # 将用户输入添加到会话
-        user_message: Message = Message(role=Role.USER, content=prompt)
+        user_message: Message = Message(
+            role=Role.USER,
+            content=prompt
+        )
         self.session.messages.append(user_message)
 
         # 初始化变量
@@ -110,13 +104,14 @@ class TaskAgent:
 
                 # 将原始的 Delta 对象直接转发给调用者，实现实时流式效果
                 yield delta
-            # 流式响应结束后，根据结束原因决定下一步操作
-            if finish_reason == FinishReason.STOP:              # 正常结束
-                break
 
+            # 正常结束则直接退出循环
+            if finish_reason == FinishReason.STOP:
+                break
+            # 模型要求调用工具
             elif (
-                finish_reason == FinishReason.TOOL_CALLS and    # 需要调用工具
-                collected_tool_calls                            # 且收到了具体的工具调用请求
+                finish_reason == FinishReason.TOOL_CALLS
+                and collected_tool_calls    # 且收到了具体的工具调用请求
             ):
                 # 将 AI 的回复（包括思考过程和工具调用请求）作为一个消息添加到工作列表中
                 assistant_msg: Message = Message(
@@ -149,8 +144,8 @@ class TaskAgent:
 
                 # 继续下一次循环
                 continue
+            # 其他异常情况，直接退出
             else:
-                # 其他异常情况，直接退出
                 break
 
         # 如果循环次数达到上限，发送一条警告信息
@@ -161,7 +156,7 @@ class TaskAgent:
             )
 
         # 将最新会话保存到文件
-        self.save_session()
+        self._save_session()
 
     def invoke(self, prompt: str) -> Response:
         """阻塞式生成"""

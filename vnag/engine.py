@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from collections.abc import Generator
 from datetime import datetime
+from re import S
 
 from .gateway import BaseGateway
 from .object import (
@@ -20,14 +21,7 @@ from .mcp import McpManager
 from .local import LocalManager
 from .tracer import LogTracer
 from .agent import Profile, TaskAgent
-from .utility import TEMP_DIR
-
-
-PROFILE_DIR: Path = TEMP_DIR.joinpath("profiles")
-PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-
-SESSION_DIR: Path = TEMP_DIR.joinpath("sessions")
-PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+from .utility import TEMP_DIR, PROFILE_DIR, SESSION_DIR
 
 
 class AgentEngine:
