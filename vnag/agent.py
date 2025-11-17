@@ -49,6 +49,26 @@ class TaskAgent:
                 ensure_ascii=False
             )
 
+    @property
+    def id(self) -> str:
+        """任务ID"""
+        return self.session.id
+
+    @property
+    def name(self) -> str:
+        """任务名称"""
+        return self.session.name
+
+    @property
+    def model(self) -> str:
+        """模型名称"""
+        return self.session.model
+
+    @property
+    def messages(self) -> list[Message]:
+        """会话消息"""
+        return self.session.messages
+
     def stream(self, prompt: str) -> Generator[Delta, None, None]:
         """流式生成"""
         # 将用户输入添加到会话
@@ -184,3 +204,52 @@ class TaskAgent:
             content=full_content,
             usage=total_usage
         )
+
+    def rename(self, name: str) -> None:
+        """重命名任务"""
+        self.session.name = name
+
+        self._save_session()
+
+    def delete_round(self) -> None:
+        """删除最后一轮对话"""
+        # 必须有对话历史，且最后一条是助手消息
+        if (
+            not self.messages
+            or self.messages[-1].role != Role.ASSISTANT
+        ):
+            return
+
+        # 删除最后一轮对话（用户消息和助手消息）
+        self.messages.pop()
+        self.messages.pop()
+
+        # 保存会话状态
+        self._save_session()
+
+    def resend_round(self) -> str:
+        """重新发送最后一轮对话"""
+        # 必须有对话历史，且最后一条是助手消息
+        if (
+            not self.messages
+            or self.messages[-1].role != Role.ASSISTANT
+        ):
+            return ""
+
+        # 删除助手消息
+        self.messages.pop()
+
+        # 删除用户消息
+        user_message: Message = self.messages.pop()
+
+        # 保存会话状态
+        self._save_session()
+
+        # 返回用户消息内容
+        return user_message.content
+
+    def set_model(self, model: str) -> None:
+        """设置模型"""
+        self.session.model = model
+
+        self._save_session()

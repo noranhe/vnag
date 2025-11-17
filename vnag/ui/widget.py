@@ -2,12 +2,11 @@ import json
 import os
 import uuid
 from collections import defaultdict
-from pathlib import Path
 
 from ..constant import Role
 from ..engine import AgentEngine
 from ..object import Message, Session, ToolSchema
-from ..agent import AgentProfile, TaskAgent
+from ..agent import Profile, TaskAgent
 
 from .qt import (
     QtCore,
@@ -17,7 +16,6 @@ from .qt import (
     QtWebEngineWidgets
 )
 from .worker import StreamWorker
-from .base import SESSION_DIR
 
 
 class HistoryWidget(QtWebEngineWidgets.QWebEngineView):
@@ -141,7 +139,6 @@ class AgentWidget(QtWidgets.QWidget):
 
         self.engine: AgentEngine = engine
         self.agent: TaskAgent = agent
-        self.session: Session = agent.session
         self.models: list[str] = models
 
         self.init_ui()
@@ -186,7 +183,7 @@ class AgentWidget(QtWidgets.QWidget):
         self.model_line.setFixedHeight(50)
         self.model_line.setPlaceholderText("请输入要使用的模型")
         self.model_line.setCompleter(completer)
-        self.model_line.setText(self.session.model)
+        self.model_line.setText(self.agent.model)
         self.model_line.editingFinished.connect(self.on_model_changed)
 
         hbox = QtWidgets.QHBoxLayout()
@@ -205,7 +202,7 @@ class AgentWidget(QtWidgets.QWidget):
         """显示当前会话的聊天记录"""
         self.history_widget.clear()
 
-        for message in self.session.messages:
+        for message in self.agent.messages:
             self.history_widget.append_message(message.role, message.content)
 
         self.update_buttons()
@@ -237,49 +234,23 @@ class AgentWidget(QtWidgets.QWidget):
 
         QtCore.QThreadPool.globalInstance().start(worker)
 
-    def save_session(self) -> None:
-        """保存会话"""
-        data: dict = self.session.model_dump()
-        file_path: Path = SESSION_DIR.joinpath(f"{self.session.id}.json")
-
-        with open(file_path, mode="w+", encoding="UTF-8") as f:
-            json.dump(
-                data,
-                f,
-                indent=4,
-                ensure_ascii=False
-            )
-
     def delete_round(self) -> None:
         """删除最后一轮对话"""
-        messages: list[Message] = self.session.messages
-        if not messages or messages[-1].role != Role.ASSISTANT:
-            return
-
-        messages.pop()
-        messages.pop()
-
+        self.agent.delete_round()
         self.display_history()
-        self.agent.save_session()
 
     def resend_round(self) -> None:
         """重新发送最后一轮对话"""
-        messages: list[Message] = self.agent.session.messages
-        if not messages or messages[-1].role != Role.ASSISTANT:
-            return
+        prompt: str = self.agent.resend_round()
 
-        user_message: Message = messages[-2]
-        self.input_widget.setText(user_message.content)
-
-        messages.pop()
-        messages.pop()
+        if prompt:
+            self.input_widget.setText(prompt)
 
         self.display_history()
-        self.agent.save_session()
 
     def update_buttons(self) -> None:
         """更新功能按钮状态"""
-        if self.session.messages and self.session.messages[-1].role == Role.ASSISTANT:
+        if self.agent.messages and self.agent.messages[-1].role == Role.ASSISTANT:
             self.resend_button.setEnabled(True)
             self.delete_button.setEnabled(True)
         else:
@@ -316,19 +287,19 @@ class AgentWidget(QtWidgets.QWidget):
     def on_model_changed(self) -> None:
         """处理模型变更"""
         model: str = self.model_line.text()
+
         if model in self.models:
-            self.agent.session.model = model
-            self.agent.save_session()
+            self.agent.set_model(model)
 
 
-class AgentsDialog(QtWidgets.QDialog):
+class ProfileDialog(QtWidgets.QDialog):
     """智能体管理界面"""
     def __init__(self, engine: AgentEngine, parent: QtWidgets.QWidget | None = None):
         """"""
         super().__init__(parent)
 
         self.engine: AgentEngine = engine
-        self.agent_profiles: dict[str, AgentProfile] = self.engine.load_agent_profiles()
+        self.agent_profiles: dict[str, Profile] = self.engine.load_agent_profiles()
 
         self.init_ui()
 
@@ -400,7 +371,7 @@ class AgentsDialog(QtWidgets.QDialog):
     def on_agent_selected(self, item: QtWidgets.QListWidgetItem) -> None:
         """显示选中智能体的配置"""
         agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        config: AgentProfile = self.agent_profiles[agent_id]
+        config: Profile = self.agent_profiles[agent_id]
 
         self.name_line.setText(config.name)
         self.prompt_text.setPlainText(config.system_prompt)
@@ -410,7 +381,7 @@ class AgentsDialog(QtWidgets.QDialog):
 
     def add_agent(self) -> None:
         """新建智能体配置"""
-        config = AgentProfile(name="未命名")
+        config = Profile(name="未命名")
         self.engine.save_agent_profile(config)
 
         self.agent_profiles[config.id] = config
@@ -426,7 +397,7 @@ class AgentsDialog(QtWidgets.QDialog):
             return
 
         agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        config: AgentProfile = self.agent_profiles[agent_id]
+        config: Profile = self.agent_profiles[agent_id]
 
         config.name = self.name_line.text()
         item.setText(config.name)
@@ -470,7 +441,7 @@ class AgentsDialog(QtWidgets.QDialog):
                 button.setChecked(False)
 
 
-class ToolsDialog(QtWidgets.QDialog):
+class ToolDialog(QtWidgets.QDialog):
     """显示可用工具的对话框"""
 
     def __init__(self, engine: AgentEngine, parent: QtWidgets.QWidget | None = None) -> None:
@@ -601,7 +572,7 @@ class ToolsDialog(QtWidgets.QDialog):
         menu.exec(self.tree_widget.viewport().mapToGlobal(pos))
 
 
-class ModelsDialog(QtWidgets.QDialog):
+class ModelDialog(QtWidgets.QDialog):
     """显示可用模型的对话框"""
 
     def __init__(self, engine: AgentEngine, parent: QtWidgets.QWidget | None = None) -> None:
@@ -686,4 +657,3 @@ class ModelsDialog(QtWidgets.QDialog):
             return None
 
         return max(counts, key=counts.get)
-

@@ -4,9 +4,9 @@ import json
 from ..engine import AgentEngine
 from ..utility import WORKING_DIR
 from ..object import Session
-from ..agent import AgentProfile, TaskAgent
+from ..agent import Profile, TaskAgent
 from .. import __version__
-from .widget import AgentWidget, ToolsDialog, ModelsDialog, AgentsDialog
+from .widget import AgentWidget, ToolDialog, ModelDialog, ProfileDialog
 from .qt import QtWidgets, QtGui, QtCore
 
 
@@ -23,9 +23,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.engine: AgentEngine = engine
 
-        self.agent_profiles: dict[str, AgentProfile] = {}
+        self.agent_profiles: dict[str, Profile] = {}
+
         self.agent_widgets: dict[str, AgentWidget] = {}
+
         self.current_id: str = ""
+
         self.models: list[str] = self.engine.list_models()
 
         self.init_ui()
@@ -47,7 +50,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # 左侧会话相关
         self.new_button: QtWidgets.QPushButton = QtWidgets.QPushButton("新建会话")
         self.new_button.setFixedHeight(50)
-        self.new_button.clicked.connect(self.new_session)
+        self.new_button.clicked.connect(self.new_agent_widget)
 
         self.session_list: QtWidgets.QListWidget = QtWidgets.QListWidget()
 
@@ -103,31 +106,31 @@ class MainWindow(QtWidgets.QMainWindow):
         sys_menu.addAction("退出", self.close)
 
         function_menu: QtWidgets.QMenu = menu_bar.addMenu("功能")
-        function_menu.addAction("新建会话", self.new_session)
-        function_menu.addAction("管理智能体", self.show_agents)
-        function_menu.addAction("查看工具", self.show_tools)
-        function_menu.addAction("查看模型", self.show_models)
+        function_menu.addAction("新建会话", self.new_agent_widget)
+        function_menu.addAction("管理智能体", self.show_profile_dialog)
+        function_menu.addAction("查看工具", self.show_tool_dialog)
+        function_menu.addAction("查看模型", self.show_model_dialog)
 
         help_menu: QtWidgets.QMenu = menu_bar.addMenu("帮助")
         help_menu.addAction("官网", self.open_website)
         help_menu.addAction("关于", self.show_about)
 
-    def show_agents(self) -> None:
+    def show_profile_dialog(self) -> None:
         """显示智能体管理界面"""
-        dialog: AgentsDialog = AgentsDialog(self.engine, self)
+        dialog: ProfileDialog = ProfileDialog(self.engine, self)
         dialog.exec()
 
         # 重新加载智能体配置
         self.agent_profiles = self.engine.load_agent_profiles()
 
-    def show_tools(self) -> None:
+    def show_tool_dialog(self) -> None:
         """显示工具"""
-        dialog: ToolsDialog = ToolsDialog(self.engine, self)
+        dialog: ToolDialog = ToolDialog(self.engine, self)
         dialog.exec()
 
-    def show_models(self) -> None:
+    def show_model_dialog(self) -> None:
         """显示模型"""
-        dialog: ModelsDialog = ModelsDialog(self.engine, self)
+        dialog: ModelDialog = ModelDialog(self.engine, self)
         dialog.exec()
 
     def load_data(self) -> None:
@@ -136,65 +139,51 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 如果没有任何Agent配置，则创建一个默认的
         if not self.agent_profiles:
-            default_config: AgentProfile = AgentProfile(
+            default_config: Profile = Profile(
                 name="通用聊天助手",
                 system_prompt="你是一个乐于助人的人工智能助手。"
             )
             self.engine.save_agent_profile(default_config)
             self.agent_profiles[default_config.id] = default_config
 
-        self.load_sessions()
+        self.load_agent_widgets()
 
-    def load_sessions(self) -> None:
+    def load_agent_widgets(self) -> None:
         """加载所有会话"""
-        self.agent_widgets.clear()
+        agents: list[TaskAgent] = self.engine.get_all_agents()
+        agents.sort(key=lambda a: a.id, reverse=True)
 
-        session_files: list[Path] = sorted(
-            SESSION_DIR.glob("*.json"),
-            key=lambda f: f.stat().st_mtime,
-            reverse=True
-        )
-
-        for file_path in session_files:
-            with open(file_path, encoding="UTF-8") as f:
-                data: dict = json.load(f)
-                session: Session = Session.model_validate(data)
-
-            agent_profile: AgentProfile | None = self.agent_profiles.get(session.agent_id)
-            if not agent_profile:
-                agent_profile = next(iter(self.agent_profiles.values()))
-
-            agent: TaskAgent = self.engine.create_agent(agent_profile, session)
+        for agent in agents:
             self.add_agent_widget(agent)
 
         if not self.agent_widgets:
-            self.new_session()
+            self.new_agent_widget()
         else:
-            self.current_id = next(iter(self.agent_widgets.keys()))
-            self.switch_session(self.current_id)
+            self.current_id = agents[0].id
+            self.switch_agent_widget(self.current_id)
 
-        self.update_list()
+        self.update_agent_list()
 
-    def update_list(self) -> None:
+    def update_agent_list(self) -> None:
         """更新会话列表UI"""
         self.session_list.clear()
 
         sorted_widgets = sorted(
             self.agent_widgets.values(),
-            key=lambda w: Path(SESSION_DIR, f"{w.agent.session.id}.json").stat().st_mtime,
+            key=lambda w: w.agent.id,
             reverse=True
         )
 
         for widget in sorted_widgets:
-            session: Session = widget.agent.session
-            item: QtWidgets.QListWidgetItem = QtWidgets.QListWidgetItem(session.name)
-            item.setData(QtCore.Qt.ItemDataRole.UserRole, session.id)
+            agent: TaskAgent = widget.agent
+            item: QtWidgets.QListWidgetItem = QtWidgets.QListWidgetItem(agent.name)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, agent.id)
             self.session_list.addItem(item)
 
-            if session.id == self.current_id:
+            if agent.id == self.current_id:
                 self.session_list.setCurrentItem(item)
 
-    def new_session(self) -> None:
+    def new_agent_widget(self) -> None:
         """创建新会话"""
         # 如果没有Agent配置则返回
         if not self.agent_profiles:
@@ -214,7 +203,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not (ok and name):
             return
 
-        selected_config: AgentProfile | None = None
+        selected_config: Profile | None = None
         for config in self.agent_profiles.values():
             if config.name == name:
                 selected_config = config
@@ -224,43 +213,45 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         # 创建新Session和Agent实例
-        session: Session = Session(agent_id=selected_config.id)
-        agent: TaskAgent = self.engine.create_agent(selected_config, session)
-        agent.save_session()
+        agent: TaskAgent = self.engine.create_agent(selected_config)
 
         self.add_agent_widget(agent)
-        self.update_list()
-        self.switch_session(session.id)
+        self.update_agent_list()
+        self.switch_agent_widget(agent.id)
 
     def add_agent_widget(self, agent: TaskAgent) -> None:
         """添加会话窗口"""
         widget: AgentWidget = AgentWidget(self.engine, agent, self.models)
         self.stacked_widget.addWidget(widget)
-        self.agent_widgets[agent.session.id] = widget
+        self.agent_widgets[agent.id] = widget
 
-    def switch_session(self, session_id: str) -> None:
+    def switch_agent_widget(self, session_id: str) -> None:
         """根据ID切换会话"""
         self.current_id = session_id
 
         widget: AgentWidget = self.agent_widgets[session_id]
         self.stacked_widget.setCurrentWidget(widget)
-        self.update_list()
+        self.update_agent_list()
 
-    def rename_session(self, session_id: str) -> None:
+    def rename_agent_widget(self, session_id: str) -> None:
         """重命名会话"""
         widget: AgentWidget | None = self.agent_widgets.get(session_id)
         if not widget:
             return
 
-        session: Session = widget.agent.session
-        text, ok = QtWidgets.QInputDialog.getText(self, "重命名会话", "请输入新的会话名称：", text=session.name)
+        agent: TaskAgent = widget.agent
+        text, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "重命名会话",
+            "请输入新的会话名称：",
+            text=agent.name
+        )
 
         if ok and text:
-            session.name = text
-            self.update_list()
-            widget.agent.save_session()
+            widget.agent.rename(text)
+            self.update_agent_list()
 
-    def delete_session(self, session_id: str) -> None:
+    def delete_agent_widget(self, session_id: str) -> None:
         """删除会话"""
         reply: QtWidgets.QMessageBox.StandardButton = QtWidgets.QMessageBox.question(
             self,
@@ -275,7 +266,7 @@ class MainWindow(QtWidgets.QMainWindow):
             widget: AgentWidget = self.agent_widgets.pop(session_id, None)
             if widget:
                 # 从文件系统删除
-                widget.agent.delete_session()
+                self.engine.delete_agent(session_id)
 
                 self.stacked_widget.removeWidget(widget)
                 widget.deleteLater()
@@ -284,11 +275,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.current_id == session_id:
                 if self.agent_widgets:
                     self.current_id = next(iter(self.agent_widgets.keys()))
-                    self.switch_session(self.current_id)
+                    self.switch_agent_widget(self.current_id)
                 else:
-                    self.new_session()
+                    self.new_agent_widget()
 
-            self.update_list()
+            self.update_agent_list()
 
     def show_about(self) -> None:
         """显示关于"""
@@ -315,7 +306,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if event.key() == QtCore.Qt.Key.Key_Delete:
                 item: QtWidgets.QListWidgetItem = self.session_list.currentItem()
                 if item:
-                    self.delete_session(item.data(QtCore.Qt.ItemDataRole.UserRole))
+                    self.delete_agent_widget(item.data(QtCore.Qt.ItemDataRole.UserRole))
                     return True
 
         return super().eventFilter(obj, event)
@@ -323,7 +314,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_item_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         """处理列表项点击事件"""
         session_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        self.switch_session(session_id)
+        self.switch_agent_widget(session_id)
 
     def on_menu_requested(self, pos: QtCore.QPoint) -> None:
         """显示会话的右键菜单"""
@@ -336,9 +327,9 @@ class MainWindow(QtWidgets.QMainWindow):
         menu: QtWidgets.QMenu = QtWidgets.QMenu(self)
 
         rename_action: QtGui.QAction = menu.addAction("重命名")
-        rename_action.triggered.connect(lambda: self.rename_session(session_id))
+        rename_action.triggered.connect(lambda: self.rename_agent_widget(session_id))
 
         delete_action: QtGui.QAction = menu.addAction("删除")
-        delete_action.triggered.connect(lambda: self.delete_session(session_id))
+        delete_action.triggered.connect(lambda: self.delete_agent_widget(session_id))
 
         menu.exec(self.session_list.mapToGlobal(pos))
