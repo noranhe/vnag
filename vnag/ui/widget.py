@@ -294,129 +294,291 @@ class AgentWidget(QtWidgets.QWidget):
 
 class ProfileDialog(QtWidgets.QDialog):
     """智能体管理界面"""
+
     def __init__(self, engine: AgentEngine, parent: QtWidgets.QWidget | None = None):
         """"""
         super().__init__(parent)
 
         self.engine: AgentEngine = engine
-        self.agent_profiles: dict[str, Profile] = self.engine.load_agent_profiles()
+        self.profiles: dict[str, Profile] = {}
 
         self.init_ui()
+        self.load_profiles()
 
     def init_ui(self) -> None:
         """"""
-        self.setWindowTitle("智能体管理")
+        self.setWindowTitle("智能体配置管理")
         self.setMinimumSize(1000, 600)
 
-        # Left list widget
-        self.agent_list: QtWidgets.QListWidget = QtWidgets.QListWidget()
-        self.agent_list.itemClicked.connect(self.on_agent_selected)
-        for config in self.agent_profiles.values():
-            item = QtWidgets.QListWidgetItem(config.name, self.agent_list)
-            item.setData(QtCore.Qt.ItemDataRole.UserRole, config.id)
+        # 左侧列表
+        self.profile_list: QtWidgets.QListWidget = QtWidgets.QListWidget()
+        self.profile_list.itemClicked.connect(self.on_profile_selected)
 
-        # Right form layout
+        # 右侧表单
         self.name_line: QtWidgets.QLineEdit = QtWidgets.QLineEdit()
         self.prompt_text: QtWidgets.QTextEdit = QtWidgets.QTextEdit()
 
-        all_tools: list[str] = [schema.name for schema in self.engine.get_tool_schemas()]
-        self.tool_buttons: dict[str, QtWidgets.QCheckBox] = {}
-        tool_layout = QtWidgets.QVBoxLayout()
-        for tool_name in all_tools:
-            button = QtWidgets.QCheckBox(tool_name)
-            self.tool_buttons[tool_name] = button
-            tool_layout.addWidget(button)
+        # 温度
+        self.temperature_line: QtWidgets.QLineEdit = QtWidgets.QLineEdit()
+        temperature_validator: QtGui.QDoubleValidator = QtGui.QDoubleValidator(0.0, 2.0, 1)
+        temperature_validator.setNotation(QtGui.QDoubleValidator.Notation.StandardNotation)
+        self.temperature_line.setValidator(temperature_validator)
+        self.temperature_line.setPlaceholderText("可选，0.0-2.0之间，1位小数")
 
-        tool_widget = QtWidgets.QWidget()
-        tool_widget.setLayout(tool_layout)
+        # 最大Token数
+        self.tokens_line: QtWidgets.QLineEdit = QtWidgets.QLineEdit()
+        max_tokens_validator: QtGui.QIntValidator = QtGui.QIntValidator(1, 10_000_000)
+        self.tokens_line.setValidator(max_tokens_validator)
+        self.tokens_line.setPlaceholderText("可选，正整数")
 
-        tool_area = QtWidgets.QScrollArea()
-        tool_area.setWidgetResizable(True)
-        tool_area.setWidget(tool_widget)
+        self.iterations_spin: QtWidgets.QSpinBox = QtWidgets.QSpinBox()
+        self.iterations_spin.setRange(1, 200)
+        self.iterations_spin.setSingleStep(1)
+        self.iterations_spin.setValue(10)
 
-        form: QtWidgets.QFormLayout = QtWidgets.QFormLayout()
-        form.addRow("名称", self.name_line)
-        form.addRow("系统提示词", self.prompt_text)
-        form.addRow("可用工具", tool_area)
+        # 工具列表
+        self.tool_tree: QtWidgets.QTreeWidget = QtWidgets.QTreeWidget()
+        self.tool_tree.setHeaderHidden(True)
+        self.populate_tool_tree()
 
-        right_widget: QtWidgets.QWidget = QtWidgets.QWidget()
-        right_widget.setLayout(form)
+        # 中间区域表单
+        settings_form: QtWidgets.QFormLayout = QtWidgets.QFormLayout()
+        settings_form.addRow("配置名称", self.name_line)
+        settings_form.addRow("系统提示词", self.prompt_text)
+        settings_form.addRow("温度", self.temperature_line)
+        settings_form.addRow("最大Token数", self.tokens_line)
+        settings_form.addRow("最大迭代次数", self.iterations_spin)
 
-        # Splitter
+        middle_widget: QtWidgets.QWidget = QtWidgets.QWidget()
+        middle_widget.setLayout(settings_form)
+
+        # 三栏分割器
         splitter = QtWidgets.QSplitter()
-        splitter.addWidget(self.agent_list)
-        splitter.addWidget(right_widget)
-        splitter.setSizes([200, 800])
+        splitter.addWidget(self.profile_list)
+        splitter.addWidget(middle_widget)
+        splitter.addWidget(self.tool_tree)
+        splitter.setSizes([200, 500, 300])
 
-        # Buttons
+        # 底部按钮
         self.add_button: QtWidgets.QPushButton = QtWidgets.QPushButton("新建")
-        self.add_button.clicked.connect(self.add_agent)
+        self.add_button.clicked.connect(self.new_profile)
 
         self.save_button: QtWidgets.QPushButton = QtWidgets.QPushButton("保存")
-        self.save_button.clicked.connect(self.save_agent)
+        self.save_button.clicked.connect(self.save_profile)
 
         self.delete_button: QtWidgets.QPushButton = QtWidgets.QPushButton("删除")
-        self.delete_button.clicked.connect(self.delete_agent)
+        self.delete_button.clicked.connect(self.delete_profile)
 
-        hbox = QtWidgets.QHBoxLayout()
-        hbox.addWidget(self.add_button)
-        hbox.addWidget(self.save_button)
-        hbox.addWidget(self.delete_button)
+        buttons_hbox = QtWidgets.QHBoxLayout()
+        buttons_hbox.addStretch()
+        buttons_hbox.addWidget(self.add_button)
+        buttons_hbox.addWidget(self.save_button)
+        buttons_hbox.addWidget(self.delete_button)
 
-        vbox = QtWidgets.QVBoxLayout()
-        vbox.addWidget(splitter)
-        vbox.addLayout(hbox)
-        self.setLayout(vbox)
+        # 主布局
+        main_vbox = QtWidgets.QVBoxLayout()
+        main_vbox.addWidget(splitter)
+        main_vbox.addLayout(buttons_hbox)
+        self.setLayout(main_vbox)
 
-    def on_agent_selected(self, item: QtWidgets.QListWidgetItem) -> None:
-        """显示选中智能体的配置"""
-        agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        config: Profile = self.agent_profiles[agent_id]
+    def load_profiles(self) -> None:
+        """加载配置"""
+        self.profile_list.clear()
 
-        self.name_line.setText(config.name)
-        self.prompt_text.setPlainText(config.system_prompt)
+        self.profiles = {p.name: p for p in self.engine.get_all_profiles()}
 
-        for name, button in self.tool_buttons.items():
-            button.setChecked(name in config.tools)
+        for profile in self.profiles.values():
+            item: QtWidgets.QListWidgetItem = QtWidgets.QListWidgetItem(profile.name, self.profile_list)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, profile.name)
 
-    def add_agent(self) -> None:
+    def populate_tool_tree(self) -> None:
+        """填充工具树"""
+        self.tool_tree.clear()
+
+        # 添加本地工具
+        local_tools: dict[str, ToolSchema] = self.engine._local_tools
+        if local_tools:
+            local_root = QtWidgets.QTreeWidgetItem(self.tool_tree, ["本地工具"])
+
+            module_tools: dict[str, list[ToolSchema]] = defaultdict(list)
+            for schema in local_tools.values():
+                module, _ = schema.name.split(".", 1)
+                module_tools[module].append(schema)
+
+            for module, schemas in sorted(module_tools.items()):
+                module_item = QtWidgets.QTreeWidgetItem(local_root, [module])
+                module_item.setFlags(
+                    module_item.flags()
+                    | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                    | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+                )
+                module_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+
+                for schema in sorted(schemas, key=lambda s: s.name):
+                    tool_item = QtWidgets.QTreeWidgetItem(module_item, [schema.name])
+                    tool_item.setFlags(tool_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                    tool_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+                    tool_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, schema.name)
+
+        # 添加MCP工具
+        mcp_tools: dict[str, ToolSchema] = self.engine._mcp_tools
+        if mcp_tools:
+            mcp_root = QtWidgets.QTreeWidgetItem(self.tool_tree, ["MCP工具"])
+
+            server_tools: dict[str, list[ToolSchema]] = defaultdict(list)
+            for schema in mcp_tools.values():
+                server, _ = schema.name.split("_", 1)
+                server_tools[server].append(schema)
+
+            for server, schemas in sorted(server_tools.items()):
+                server_item = QtWidgets.QTreeWidgetItem(mcp_root, [server])
+                server_item.setFlags(
+                    server_item.flags()
+                    | QtCore.Qt.ItemFlag.ItemIsUserCheckable
+                    | QtCore.Qt.ItemFlag.ItemIsAutoTristate
+                )
+                server_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+
+                for schema in sorted(schemas, key=lambda s: s.name):
+                    tool_item = QtWidgets.QTreeWidgetItem(server_item, [schema.name])
+                    tool_item.setFlags(tool_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                    tool_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+                    tool_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, schema.name)
+
+        self.tool_tree.expandAll()
+
+    def on_profile_selected(self, item: QtWidgets.QListWidgetItem) -> None:
+        """显示选中智能体配置"""
+        self.name_line.setReadOnly(True)
+
+        profile_name: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        profile: Profile = self.profiles[profile_name]
+
+        self.name_line.setText(profile.name)
+        self.prompt_text.setPlainText(profile.prompt)
+
+        if profile.temperature is not None:
+            self.temperature_line.setText(str(profile.temperature))
+        else:
+            self.temperature_line.clear()
+
+        if profile.max_tokens is not None:
+            self.tokens_line.setText(str(profile.max_tokens))
+        else:
+            self.tokens_line.clear()
+
+        self.iterations_spin.setValue(profile.max_iterations)
+
+        # 取消选中所有工具项
+        iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
+        while iterator.value():
+            item: QtWidgets.QTreeWidgetItem = iterator.value()
+            if item.childCount() == 0:  # 叶子节点/工具
+                item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            iterator += 1
+
+        # 检查配置中的工具
+        iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
+        while iterator.value():
+            item = iterator.value()
+            tool_name = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if tool_name in profile.tools:
+                item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+            iterator += 1
+
+    def new_profile(self) -> None:
         """新建智能体配置"""
-        config = Profile(name="未命名")
-        self.engine.save_agent_profile(config)
+        self.profile_list.clearSelection()
 
-        self.agent_profiles[config.id] = config
-        item = QtWidgets.QListWidgetItem(config.name, self.agent_list)
-        item.setData(QtCore.Qt.ItemDataRole.UserRole, config.id)
-        self.agent_list.setCurrentItem(item)
-        self.on_agent_selected(item)
+        self.name_line.setReadOnly(False)
+        self.name_line.clear()
+        self.prompt_text.clear()
 
-    def save_agent(self) -> None:
+        self.temperature_line.clear()
+        self.tokens_line.clear()
+        self.iterations_spin.setValue(10)
+
+        iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
+        while iterator.value():
+            item = iterator.value()
+            item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            iterator += 1
+
+        self.name_line.setFocus()
+
+    def save_profile(self) -> None:
         """保存智能体配置"""
-        item: QtWidgets.QListWidgetItem = self.agent_list.currentItem()
-        if not item:
+        name: str = self.name_line.text()
+        if not name:
+            QtWidgets.QMessageBox.warning(self, "错误", "名称不能为空！")
             return
 
-        agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        config: Profile = self.agent_profiles[agent_id]
+        prompt: str = self.prompt_text.toPlainText()
+        if not prompt:
+            QtWidgets.QMessageBox.warning(self, "错误", "系统提示词不能为空！")
+            return
 
-        config.name = self.name_line.text()
-        item.setText(config.name)
+        temp_text: str = self.temperature_line.text()
+        temperature: float | None = float(temp_text) if temp_text else None
 
-        config.system_prompt = self.prompt_text.toPlainText()
+        max_tokens_text: str = self.tokens_line.text()
+        max_tokens: int | None = int(max_tokens_text) if max_tokens_text else None
+
+        max_iterations: int = self.iterations_spin.value()
 
         selected_tools: list[str] = []
-        for name, button in self.tool_buttons.items():
-            if button.isChecked():
-                selected_tools.append(name)
-        config.tools = selected_tools
+        iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
+        while iterator.value():
+            item: QtWidgets.QTreeWidgetItem = iterator.value()
+            if item.checkState(0) == QtCore.Qt.CheckState.Checked:
+                tool_name: str = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+                if tool_name:  # 工具项，不是分类
+                    selected_tools.append(tool_name)
+            iterator += 1
 
-        self.engine.save_agent_profile(config)
-        QtWidgets.QMessageBox.information(self, "成功", "智能体配置已保存！")
+        item: QtWidgets.QListWidgetItem | None = self.profile_list.currentItem()
 
-    def delete_agent(self) -> None:
+        # 更新现有配置
+        if name in self.profiles:
+            profile: Profile = self.profiles[name]
+
+            profile.prompt = prompt
+            profile.tools = selected_tools
+            profile.temperature = temperature
+            profile.max_tokens = max_tokens
+            profile.max_iterations = max_iterations
+
+            self.engine.update_profile(profile)
+        # 创建新配置
+        else:
+            profile: Profile = Profile(
+                name=name,
+                prompt=prompt,
+                tools=selected_tools,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                max_iterations=max_iterations,
+            )
+            self.engine.add_profile(profile)
+
+        self.load_profiles()
+
+        QtWidgets.QMessageBox.information(self, "成功", f"{name} 智能体配置已保存！")
+
+    def delete_profile(self) -> None:
         """删除智能体配置"""
-        item: QtWidgets.QListWidgetItem = self.agent_list.currentItem()
-        if not item:
+        item: QtWidgets.QListWidgetItem = self.profile_list.currentItem()
+
+        profile_name: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
+
+        # 检查智能体依赖
+        agents: list[TaskAgent] = self.engine.get_all_agents()
+
+        dependent_agents: list[str] = [a.name for a in agents if a.profile.name == profile_name]
+
+        if dependent_agents:
+            msg: str = "无法删除，以下智能体正在使用该配置: \n" + "\n".join(dependent_agents)
+            QtWidgets.QMessageBox.warning(self, "删除失败", msg)
             return
 
         reply: QtWidgets.QMessageBox.StandardButton = QtWidgets.QMessageBox.question(
@@ -428,17 +590,9 @@ class ProfileDialog(QtWidgets.QDialog):
         )
 
         if reply == QtWidgets.QMessageBox.StandardButton.Yes:
-            agent_id: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
-
-            self.agent_profiles.pop(agent_id)
-            self.engine.delete_agent_profile(agent_id)
-
-            self.agent_list.takeItem(self.agent_list.row(item))
-
-            self.name_line.clear()
-            self.prompt_text.clear()
-            for button in self.tool_buttons.values():
-                button.setChecked(False)
+            self.engine.delete_profile(profile_name)
+            self.load_profiles()
+            self.new_profile()
 
 
 class ToolDialog(QtWidgets.QDialog):
