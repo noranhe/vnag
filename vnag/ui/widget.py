@@ -16,6 +16,7 @@ from .qt import (
     QtWebEngineWidgets
 )
 from .worker import StreamWorker
+from .utility import load_favorite_models, save_favorite_models
 
 
 class HistoryWidget(QtWebEngineWidgets.QWebEngineView):
@@ -179,20 +180,15 @@ class AgentWidget(QtWidgets.QWidget):
         self.delete_button.setFixedHeight(button_height)
         self.delete_button.setEnabled(False)
 
-        completer: QtWidgets.QCompleter = QtWidgets.QCompleter(self.models)
-        completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
-
-        self.model_line: QtWidgets.QLineEdit = QtWidgets.QLineEdit()
-        self.model_line.setFixedWidth(300)
-        self.model_line.setFixedHeight(50)
-        self.model_line.setPlaceholderText("请输入要使用的模型")
-        self.model_line.setCompleter(completer)
-        self.model_line.setText(self.agent.model)
-        self.model_line.editingFinished.connect(self.on_model_changed)
+        self.model_combo: QtWidgets.QComboBox = QtWidgets.QComboBox()
+        self.model_combo.setFixedWidth(300)
+        self.model_combo.setFixedHeight(50)
+        self.model_combo.currentTextChanged.connect(self.on_model_changed)
+        self.load_favorite_models()
 
         hbox = QtWidgets.QHBoxLayout()
         hbox.addStretch()
-        hbox.addWidget(self.model_line)
+        hbox.addWidget(self.model_combo)
         hbox.addWidget(self.delete_button)
         hbox.addWidget(self.resend_button)
         hbox.addWidget(self.send_button)
@@ -213,9 +209,13 @@ class AgentWidget(QtWidgets.QWidget):
 
     def send_message(self) -> None:
         """发送消息"""
-        model: str = self.model_line.text()
-        if model not in self.models:
-            QtWidgets.QMessageBox.warning(self, "模型名称错误", f"找不到模型：{model}，请检查模型名称是否正确")
+        model: str = self.model_combo.currentText()
+        if not model:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "模型未选择",
+                "请先前往【主菜单-查看-模型浏览器】配置常用模型"
+            )
             return
 
         text: str = self.input_widget.toPlainText().strip()
@@ -288,12 +288,21 @@ class AgentWidget(QtWidgets.QWidget):
         QtWidgets.QMessageBox.critical(self, "错误", f"流式请求失败：\n{error_msg}")
         self.update_buttons()
 
-    def on_model_changed(self) -> None:
+    def on_model_changed(self, model: str) -> None:
         """处理模型变更"""
-        model: str = self.model_line.text()
-
-        if model in self.models:
+        if model:
             self.agent.set_model(model)
+
+    def load_favorite_models(self) -> None:
+        """加载常用模型"""
+        self.model_combo.clear()
+        favorite_models: list[str] = load_favorite_models()
+        self.model_combo.addItems(favorite_models)
+
+        if self.agent.model in favorite_models:
+            self.model_combo.setCurrentText(self.agent.model)
+        elif favorite_models:
+            self.model_combo.setCurrentIndex(0)
 
 
 class ProfileDialog(QtWidgets.QDialog):
@@ -755,16 +764,67 @@ class ModelDialog(QtWidgets.QDialog):
         self.setWindowTitle("模型浏览器")
         self.setMinimumSize(800, 600)
 
+        # 左侧所有模型树
         headers: list[str] = ["厂商", "模型"]
         self.tree_widget: QtWidgets.QTreeWidget = QtWidgets.QTreeWidget()
         self.tree_widget.setColumnCount(len(headers))
         self.tree_widget.setHeaderLabels(headers)
         self.tree_widget.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_widget.customContextMenuRequested.connect(self.show_context_menu)
+        self.tree_widget.itemDoubleClicked.connect(self.add_model)
 
+        # 右侧常用模型列表
+        self.favorite_list: QtWidgets.QListWidget = QtWidgets.QListWidget()
+        self.favorite_list.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.favorite_list.customContextMenuRequested.connect(self.show_favorite_context_menu)
+
+        # 中间按钮
+        add_button: QtWidgets.QPushButton = QtWidgets.QPushButton(">")
+        add_button.clicked.connect(self.add_model)
+        add_button.setFixedWidth(40)
+
+        remove_button: QtWidgets.QPushButton = QtWidgets.QPushButton("<")
+        remove_button.clicked.connect(self.remove_model)
+        remove_button.setFixedWidth(40)
+
+        button_vbox: QtWidgets.QVBoxLayout = QtWidgets.QVBoxLayout()
+        button_vbox.addStretch()
+        button_vbox.addWidget(add_button)
+        button_vbox.addWidget(remove_button)
+        button_vbox.addStretch()
+
+        # 分割器
+        splitter: QtWidgets.QSplitter = QtWidgets.QSplitter()
+        splitter.addWidget(self.tree_widget)
+
+        button_widget: QtWidgets.QWidget = QtWidgets.QWidget()
+        button_widget.setLayout(button_vbox)
+        splitter.addWidget(button_widget)
+
+        splitter.addWidget(self.favorite_list)
+        splitter.setSizes([350, 50, 400])
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 4)
+
+        # 底部按钮
+        self.save_button: QtWidgets.QPushButton = QtWidgets.QPushButton("保存")
+        self.save_button.clicked.connect(self.save_settings)
+
+        buttons_hbox: QtWidgets.QHBoxLayout = QtWidgets.QHBoxLayout()
+        buttons_hbox.addStretch()
+        buttons_hbox.addWidget(self.save_button)
+
+        # 主布局
         vbox: QtWidgets.QVBoxLayout = QtWidgets.QVBoxLayout(self)
-        vbox.addWidget(self.tree_widget)
+        vbox.addWidget(splitter)
+        vbox.addLayout(buttons_hbox)
 
+        self.populate_models()
+        self.load_settings()
+
+    def populate_models(self) -> None:
+        """填充所有模型树"""
         models: list[str] = self._engine.list_models()
 
         separator: str | None = self._detect_separator(models)
@@ -775,7 +835,7 @@ class ModelDialog(QtWidgets.QDialog):
                 parts: list[str] = name.split(separator, 1)
                 if len(parts) == 2:
                     vendor, model = parts
-                    vendor_models[vendor].append(model)
+                    vendor_models[vendor].append(name)
                 else:
                     vendor_models["其他"].append(name)
         else:
@@ -787,13 +847,72 @@ class ModelDialog(QtWidgets.QDialog):
                 self.tree_widget,
                 [vendor, ""]
             )
-            for model in sorted(model_list):
-                QtWidgets.QTreeWidgetItem(vendor_item, ["", model])
+            for model_name in sorted(model_list):
+                _, model_display = model_name.split(separator, 1)
+                item: QtWidgets.QTreeWidgetItem = QtWidgets.QTreeWidgetItem(vendor_item, ["", model_display])
+                item.setData(0, QtCore.Qt.ItemDataRole.UserRole, model_name)
 
         self.tree_widget.expandAll()
 
         for i in range(self.tree_widget.columnCount()):
             self.tree_widget.resizeColumnToContents(i)
+
+    def load_settings(self) -> None:
+        """加载配置"""
+        self.favorite_list.clear()
+        favorite_models: list[str] = load_favorite_models()
+        self.favorite_list.addItems(favorite_models)
+
+    def save_settings(self) -> None:
+        """保存配置"""
+        models: list[str] = []
+        for i in range(self.favorite_list.count()):
+            item: QtWidgets.QListWidgetItem = self.favorite_list.item(i)
+            models.append(item.text())
+
+        save_favorite_models(models)
+        QtWidgets.QMessageBox.information(self, "成功", "常用模型配置已保存！")
+        self.close()
+
+    def add_model(self) -> None:
+        """添加模型到常用列表"""
+        item: QtWidgets.QTreeWidgetItem = self.tree_widget.currentItem()
+        if not item:
+            return
+
+        model_name: str | None = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        if not model_name:
+            return
+
+        current_models: list[str] = [
+            self.favorite_list.item(i).text()
+            for i in range(self.favorite_list.count())
+        ]
+        if model_name not in current_models:
+            self.favorite_list.addItem(model_name)
+
+    def remove_model(self) -> None:
+        """从常用列表移除模型"""
+        item: QtWidgets.QListWidgetItem = self.favorite_list.currentItem()
+        if item:
+            row: int = self.favorite_list.row(item)
+            self.favorite_list.takeItem(row)
+
+    def move_model_up(self) -> None:
+        """上移常用模型"""
+        current_row: int = self.favorite_list.currentRow()
+        if current_row > 0:
+            item: QtWidgets.QListWidgetItem = self.favorite_list.takeItem(current_row)
+            self.favorite_list.insertItem(current_row - 1, item)
+            self.favorite_list.setCurrentRow(current_row - 1)
+
+    def move_model_down(self) -> None:
+        """下移常用模型"""
+        current_row: int = self.favorite_list.currentRow()
+        if 0 <= current_row < self.favorite_list.count() - 1:
+            item: QtWidgets.QListWidgetItem = self.favorite_list.takeItem(current_row)
+            self.favorite_list.insertItem(current_row + 1, item)
+            self.favorite_list.setCurrentRow(current_row + 1)
 
     def show_context_menu(self, pos: QtCore.QPoint) -> None:
         """显示右键菜单"""
@@ -806,6 +925,27 @@ class ModelDialog(QtWidgets.QDialog):
         collapse_action.triggered.connect(self.tree_widget.collapseAll)
 
         menu.exec(self.tree_widget.viewport().mapToGlobal(pos))
+
+    def show_favorite_context_menu(self, pos: QtCore.QPoint) -> None:
+        """显示常用列表右键菜单"""
+        item: QtWidgets.QListWidgetItem | None = self.favorite_list.itemAt(pos)
+        if not item:
+            return
+
+        menu: QtWidgets.QMenu = QtWidgets.QMenu(self)
+
+        up_action: QtGui.QAction = menu.addAction("上移")
+        up_action.triggered.connect(self.move_model_up)
+
+        down_action: QtGui.QAction = menu.addAction("下移")
+        down_action.triggered.connect(self.move_model_down)
+
+        menu.addSeparator()
+
+        remove_action: QtGui.QAction = menu.addAction("移除")
+        remove_action.triggered.connect(self.remove_model)
+
+        menu.exec(self.favorite_list.viewport().mapToGlobal(pos))
 
     def _detect_separator(self, models: list[str]) -> str | None:
         """检测模型名称中的分隔符"""
