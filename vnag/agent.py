@@ -1,14 +1,11 @@
 import json
 from pathlib import Path
 from uuid import uuid4
-from abc import ABC
 from typing import TYPE_CHECKING
 from collections.abc import Generator
 
-from pydantic import BaseModel, Field
-
 from .object import (
-    Session,Delta, Request, Response, Message,
+    Session, Profile, Delta, Request, Response, Message,
     Usage, ToolCall, ToolResult, ToolSchema
 )
 from .constant import Role, FinishReason
@@ -22,36 +19,22 @@ SESSION_DIR: Path = WORKING_DIR.joinpath("session")
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 
-class AgentProfile(BaseModel):
-    """
-    Agent实例的配置数据模型（对应策略的JSON配置）。
-    """
-    id: str = Field(default_factory=lambda: str(uuid4()))
-    name: str                                   # 实例名称，如“市场研究员”
-    system_prompt: str = ""
-    tools: list[str] = Field(default_factory=list)
-
-
 class TaskAgent:
     """
     标准的、可直接使用的任务智能体。
     """
 
-    def __init__(self, engine: "AgentEngine", config: AgentProfile, session: Session):
+    def __init__(self, engine: "AgentEngine", profile: Profile, session: Session):
         """构造函数"""
         self.engine: AgentEngine = engine
-        self.config: AgentProfile = config
+        self.profile: Profile = profile
         self.session: Session = session
 
-        self.model: str = ""
-        self.tool_names: str = []
-        self.temperature: float | None = None
-        self.max_tokens: int | None = None
-        self.max_iterations: int = 10
+        # 更新会话所用的智能体配置
+        self.session.profile = self.profile.name
 
     def save_session(self) -> None:
         """将会话状态保存到文件。"""
-        self.session.agent_id = self.config.id
         data: dict = self.session.model_dump()
         file_path: Path = SESSION_DIR.joinpath(f"{self.session.id}.json")
 
@@ -66,25 +49,15 @@ class TaskAgent:
     def delete_session(self) -> None:
         """从文件系统删除会话文件。"""
         file_path: Path = SESSION_DIR.joinpath(f"{self.session.id}.json")
+
         if file_path.exists():
             file_path.unlink()
-
-    def _prepare_messages(self) -> list[Message]:
-        """准备请求所用的消息列表"""
-        messages = self.session.messages.copy()
-
-        # 如果有系统提示词，则将其作为第一条消息
-        if self.config.system_prompt and (not messages or messages[0].role != Role.SYSTEM):
-            system_message = Message(role=Role.SYSTEM, content=self.config.system_prompt)
-            messages.insert(0, system_message)
-
-        return messages
 
     def stream(self, prompt: str) -> Generator[Delta, None, None]:
         """流式生成"""
         # 添加系统提示词
         if not self.session.messages:
-            system_message: Message = Message(role=Role.SYSTEM, content=self.config.system_prompt)
+            system_message: Message = Message(role=Role.SYSTEM, content=self.profile.prompt)
             self.session.messages.append(system_message)
 
         # 将用户输入添加到会话
@@ -96,20 +69,20 @@ class TaskAgent:
         response_id: str = ""                               # 响应ID
 
         # 查询工具定义
-        tool_schemas: list[ToolSchema] = self.engine.get_tool_schemas(self.tool_names)
+        tool_schemas: list[ToolSchema] = self.engine.get_tool_schemas(self.profile.tools)
 
         # 主循环，该循环负责处理多次工具调用的情况
-        while iteration < self.max_iterations:
+        while iteration < self.profile.max_iterations:
             # 迭代次数加1
             iteration += 1
 
             # 准备请求
             request: Request = Request(
-                model=self.model,
+                model=self.session.model,
                 messages=self.session.messages,
-                tools_schemas=tool_schemas,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
+                tool_schemas=tool_schemas,
+                temperature=self.profile.temperature,
+                max_tokens=self.profile.max_tokens
             )
 
             # 本轮循环中的数据缓存
@@ -181,7 +154,7 @@ class TaskAgent:
                 break
 
         # 如果循环次数达到上限，发送一条警告信息
-        if iteration >= self.max_iterations:
+        if iteration >= self.profile.max_iterations:
             yield Delta(
                 id=response_id or str(uuid4()),
                 content="\n[警告: 达到最大工具调用次数限制]\n"
