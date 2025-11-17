@@ -343,7 +343,7 @@ class ProfileDialog(QtWidgets.QDialog):
         # 工具列表
         self.tool_tree: QtWidgets.QTreeWidget = QtWidgets.QTreeWidget()
         self.tool_tree.setHeaderHidden(True)
-        self.populate_tool_tree()
+        self.populate_tree()
 
         # 中间区域表单
         settings_form: QtWidgets.QFormLayout = QtWidgets.QFormLayout()
@@ -395,7 +395,7 @@ class ProfileDialog(QtWidgets.QDialog):
             item: QtWidgets.QListWidgetItem = QtWidgets.QListWidgetItem(profile.name, self.profile_list)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, profile.name)
 
-    def populate_tool_tree(self) -> None:
+    def populate_tree(self) -> None:
         """填充工具树"""
         self.tool_tree.clear()
 
@@ -406,7 +406,7 @@ class ProfileDialog(QtWidgets.QDialog):
 
             module_tools: dict[str, list[ToolSchema]] = defaultdict(list)
             for schema in local_tools.values():
-                module, _ = schema.name.split(".", 1)
+                module, _ = schema.name.split("_", 1)
                 module_tools[module].append(schema)
 
             for module, schemas in sorted(module_tools.items()):
@@ -450,45 +450,6 @@ class ProfileDialog(QtWidgets.QDialog):
                     tool_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, schema.name)
 
         self.tool_tree.expandAll()
-
-    def on_profile_selected(self, item: QtWidgets.QListWidgetItem) -> None:
-        """显示选中智能体配置"""
-        self.name_line.setReadOnly(True)
-
-        profile_name: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        profile: Profile = self.profiles[profile_name]
-
-        self.name_line.setText(profile.name)
-        self.prompt_text.setPlainText(profile.prompt)
-
-        if profile.temperature is not None:
-            self.temperature_line.setText(str(profile.temperature))
-        else:
-            self.temperature_line.clear()
-
-        if profile.max_tokens is not None:
-            self.tokens_line.setText(str(profile.max_tokens))
-        else:
-            self.tokens_line.clear()
-
-        self.iterations_spin.setValue(profile.max_iterations)
-
-        # 取消选中所有工具项
-        iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
-        while iterator.value():
-            item: QtWidgets.QTreeWidgetItem = iterator.value()
-            if item.childCount() == 0:  # 叶子节点/工具
-                item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
-            iterator += 1
-
-        # 检查配置中的工具
-        iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
-        while iterator.value():
-            item = iterator.value()
-            tool_name = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
-            if tool_name in profile.tools:
-                item.setCheckState(0, QtCore.Qt.CheckState.Checked)
-            iterator += 1
 
     def new_profile(self) -> None:
         """新建智能体配置"""
@@ -607,6 +568,45 @@ class ProfileDialog(QtWidgets.QDialog):
             self.load_profiles()
             self.new_profile()
 
+    def on_profile_selected(self, item: QtWidgets.QListWidgetItem) -> None:
+        """显示选中智能体配置"""
+        self.name_line.setReadOnly(True)
+
+        profile_name: str = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        profile: Profile = self.profiles[profile_name]
+
+        self.name_line.setText(profile.name)
+        self.prompt_text.setPlainText(profile.prompt)
+
+        if profile.temperature is not None:
+            self.temperature_line.setText(str(profile.temperature))
+        else:
+            self.temperature_line.clear()
+
+        if profile.max_tokens is not None:
+            self.tokens_line.setText(str(profile.max_tokens))
+        else:
+            self.tokens_line.clear()
+
+        self.iterations_spin.setValue(profile.max_iterations)
+
+        # 取消选中所有工具项
+        iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
+        while iterator.value():
+            item: QtWidgets.QTreeWidgetItem = iterator.value()
+            if item.childCount() == 0:  # 叶子节点/工具
+                item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            iterator += 1
+
+        # 检查配置中的工具
+        iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
+        while iterator.value():
+            item = iterator.value()
+            tool_name = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if tool_name in profile.tools:
+                item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+            iterator += 1
+
 
 class ToolDialog(QtWidgets.QDialog):
     """显示可用工具的对话框"""
@@ -665,7 +665,7 @@ class ToolDialog(QtWidgets.QDialog):
 
             module_tools: dict[str, list[ToolSchema]] = defaultdict(list)
             for schema in local_tools.values():
-                module, _ = schema.name.split(".", 1)
+                module, _ = schema.name.split("_", 1)
                 module_tools[module].append(schema)
 
             for module, schemas in sorted(module_tools.items()):
@@ -674,7 +674,7 @@ class ToolDialog(QtWidgets.QDialog):
                     ["", module, ""]
                 )
                 for schema in sorted(schemas, key=lambda s: s.name):
-                    _, name = schema.name.split(".", 1)
+                    _, name = schema.name.split("_", 1)
                     item: QtWidgets.QTreeWidgetItem = QtWidgets.QTreeWidgetItem(
                         module_item,
                         ["", "", name]

@@ -94,8 +94,8 @@ def write_text_file(path: str | Path, content: str) -> None:
     p.write_text(content, encoding="utf-8")
 
 
-PROFILE_DIR: Path = TEMP_DIR.joinpath("profiles")
+PROFILE_DIR: Path = TEMP_DIR.joinpath("profile")
 PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
-SESSION_DIR: Path = TEMP_DIR.joinpath("sessions")
+SESSION_DIR: Path = TEMP_DIR.joinpath("session")
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
