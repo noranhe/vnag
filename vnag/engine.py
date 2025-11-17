@@ -1,12 +1,7 @@
 import json
-import inspect
-import importlib
-import traceback
 from pathlib import Path
-from typing import Any
 from collections.abc import Generator
-from glob import glob
-from types import ModuleType
+from datetime import datetime
 
 from .gateway import BaseGateway
 from .object import (
@@ -24,17 +19,20 @@ from .constant import Role, FinishReason
 from .mcp import McpManager
 from .local import LocalManager
 from .tracer import LogTracer
-from .agent import AgentProfile, TaskAgent
-from .utility import WORKING_DIR
+from .agent import Profile, TaskAgent
+from .utility import TEMP_DIR
 
 
-AGENT_CONFIG_DIR: Path = WORKING_DIR.joinpath("agents")
-AGENT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+PROFILE_DIR: Path = TEMP_DIR.joinpath("profiles")
+PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+
+SESSION_DIR: Path = TEMP_DIR.joinpath("sessions")
+PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class AgentEngine:
     """
-    Agent 引擎：负责Agent类的发现和注册，并提供Agent实例创建的工厂方法。
+    智能体引擎：负责智能体类的发现和注册，并提供智能体实例创建的工厂方法。
     """
 
     def __init__(self, gateway: BaseGateway) -> None:
@@ -49,10 +47,16 @@ class AgentEngine:
         self._local_tools: dict[str, ToolSchema] = {}
         self._mcp_tools: dict[str, ToolSchema] = {}
 
+        self._profiles: dict[str, Profile] = {}
+        self._agents: dict[str, TaskAgent] = {}
+
     def init(self) -> None:
         """初始化引擎"""
         self._load_local_tools()
         self._load_mcp_tools()
+
+        self._load_profiles()
+        self._load_agents()
 
     def _load_local_tools(self) -> None:
         """加载本地工具"""
@@ -64,48 +68,119 @@ class AgentEngine:
         for schema in self._mcp_manager.list_tools():
             self._mcp_tools[schema.name] = schema
 
-    def load_agent_profiles(self) -> dict[str, AgentProfile]:
+    def _load_profiles(self) -> None:
         """从JSON文件加载所有Agent配置模板。"""
-        configs: dict[str, AgentProfile] = {}
-
-        for file_path in AGENT_CONFIG_DIR.glob("*.json"):
+        for file_path in PROFILE_DIR.glob("*.json"):
             with open(file_path, encoding="UTF-8") as f:
                 data: dict = json.load(f)
-                config: AgentProfile = AgentProfile.model_validate(data)
-                configs[config.id] = config
+                profile: Profile = Profile.model_validate(data)
+                self._profiles[profile.name] = profile
 
-        return configs
+    def _save_profile(self, profile: Profile) -> None:
+        """保存智能体配置到JSON文件"""
+        profile_path: Path = PROFILE_DIR.joinpath(f"{profile.name}.json")
+        with open(profile_path, "w", encoding="UTF-8") as f:
+            json.dump(profile.model_dump(), f, indent=4, ensure_ascii=False)
 
-    def save_agent_profile(self, config: AgentProfile) -> None:
-        """保存一个Agent配置模板到JSON。"""
-        data: dict[str, AgentProfile] = config.model_dump()
+    def _load_agents(self) -> None:
+        """从JSON文件加载所有智能体"""
+        for file_path in SESSION_DIR.glob("*.json"):
+            with open(file_path, encoding="UTF-8") as f:
+                data: dict = json.load(f)
+                session: Session = Session.model_validate(data)
+                profile: Profile = self._profiles[session.profile]
+                agent: TaskAgent = TaskAgent(self, profile, session)
+                self._agents[session.id] = agent
 
-        file_path = AGENT_CONFIG_DIR.joinpath(f"{config.id}.json")
+    def add_profile(self, profile: Profile) -> bool:
+        """添加智能体配置"""
+        if profile.name in self._profiles:
+            return False
 
-        with open(file_path, "w", encoding="UTF-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        self._profiles[profile.name] = profile
 
-    def delete_agent_profile(self, agent_id: str) -> None:
-        """删除一个Agent配置模板。"""
-        file_path = AGENT_CONFIG_DIR.joinpath(f"{agent_id}.json")
+        self._save_profile(profile)
 
-        if file_path.exists():
-            file_path.unlink()
+        return True
 
-    def create_agent(self, profile: AgentProfile, session: Session) -> TaskAgent:
-        """【核心工厂方法】根据配置和会话，创建一个全新的Agent实例。"""
-        return TaskAgent(self, profile, session)
+    def update_profile(self, profile: Profile) -> bool:
+        """更新智能体配置"""
+        if profile.name not in self._profiles:
+            return False
 
-    def get_tool_schemas(self, tool_names: list[str] | None = None) -> list[ToolSchema]:
+        self._profiles[profile.name] = profile
+
+        self._save_profile(profile)
+
+        return True
+
+    def delete_profile(self, name: str) -> bool:
+        """删除智能体配置"""
+        if name not in self._profiles:
+            return False
+
+        self._profiles.pop(name)
+
+        profile_path: Path = PROFILE_DIR.joinpath(f"{name}.json")
+        profile_path.unlink()
+
+        return True
+
+    def get_profile(self, name: str) -> Profile | None:
+        """获取智能体配置"""
+        return self._profiles.get(name)
+
+    def get_all_profiles(self) -> list[Profile]:
+        """获取所有智能体配置"""
+        return list(self._profiles.values())
+
+    def create_agent(self, profile: Profile) -> TaskAgent:
+        """新建智能体"""
+        # 使用时间戳作为会话编号
+        now: datetime = datetime.now()
+        session_id: str = now.strftime("%Y%m%d_%H%M%S_%f")
+
+        # 创建会话
+        session: Session = Session(id=session_id, profile=profile.name)
+
+        # 创建智能体
+        agent: TaskAgent = TaskAgent(self, profile, session)
+
+        # 保存会话
+        self._agents[session.id] = agent
+
+        return agent
+
+    def delete_agent(self, session_id: str) -> bool:
+        """删除智能体"""
+        if session_id not in self._agents:
+            return False
+
+        self._agents.pop(session_id)
+
+        session_path: Path = SESSION_DIR.joinpath(f"{session_id}.json")
+        session_path.unlink()
+
+        return True
+
+    def get_agent(self, session_id: str) -> TaskAgent | None:
+        """获取智能体"""
+        return self._agents.get(session_id)
+
+    def get_all_agents(self) -> list[TaskAgent]:
+        """获取所有智能体"""
+        return list(self._agents.values())
+
+    def get_tool_schemas(self, tools: list[str] | None = None) -> list[ToolSchema]:
         """获取所有工具的Schema"""
         local_schemas: list[ToolSchema] = list(self._local_tools.values())
         mcp_schemas: list[ToolSchema] = list(self._mcp_tools.values())
         all_schemas: list[ToolSchema] = local_schemas + mcp_schemas
 
-        if tool_names:
+        if tools:
             tool_schemas: list[ToolSchema] = []
             for schema in all_schemas:
-                if schema.name in tool_names:
+                if schema.name in tools:
                     tool_schemas.append(schema)
             return tool_schemas
         else:
