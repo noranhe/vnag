@@ -14,7 +14,6 @@ from .object import (
 )
 from .mcp import McpManager
 from .local import LocalManager
-from .tracer import LogTracer
 from .agent import Profile, TaskAgent
 from .utility import PROFILE_DIR, SESSION_DIR
 
@@ -35,8 +34,6 @@ class AgentEngine:
     def __init__(self, gateway: BaseGateway) -> None:
         """构造函数"""
         self.gateway: BaseGateway = gateway
-
-        self._tracer: LogTracer = LogTracer()
 
         self._local_manager: LocalManager = LocalManager()
         self._mcp_manager: McpManager = McpManager()

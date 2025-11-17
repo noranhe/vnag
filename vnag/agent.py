@@ -10,6 +10,7 @@ from .object import (
 )
 from .constant import Role, FinishReason
 from .utility import SESSION_DIR
+from .tracer import LogTracer
 
 if TYPE_CHECKING:
     from .engine import AgentEngine
@@ -25,6 +26,11 @@ class TaskAgent:
         self.engine: AgentEngine = engine
         self.profile: Profile = profile
         self.session: Session = session
+
+        self.tracer: LogTracer = LogTracer(
+            session_id=self.session.id,
+            profile_name=self.profile.name
+        )
 
         # 新会话自动添加系统提示词并保存
         if not self.session.messages:
@@ -99,6 +105,9 @@ class TaskAgent:
                 max_tokens=self.profile.max_tokens
             )
 
+            # 调用追踪器：记录请求发送
+            self.tracer.on_llm_start(request)
+
             # 本轮循环中的数据缓存
             collected_content: str = ""                     # 累积收到的文本内容
             collected_tool_calls: list[ToolCall] = []       # 累积收到的工具调用请求
@@ -122,8 +131,21 @@ class TaskAgent:
                 if delta.finish_reason:
                     finish_reason = delta.finish_reason
 
+                # 调用追踪器：记录收到数据块
+                self.tracer.on_llm_delta(delta)
+
                 # 将原始的 Delta 对象直接转发给调用者，实现实时流式效果
                 yield delta
+
+            # 将AI的回复（包括思考过程和工具调用请求）作为一个消息
+            assistant_msg: Message = Message(
+                role=Role.ASSISTANT,
+                content=collected_content,
+                tool_calls=collected_tool_calls
+            )
+
+            # 调用追踪器：记录响应接收
+            self.tracer.on_llm_end(assistant_msg)
 
             # 正常结束则直接退出循环
             if finish_reason == FinishReason.STOP:
@@ -134,11 +156,6 @@ class TaskAgent:
                 and collected_tool_calls    # 且收到了具体的工具调用请求
             ):
                 # 将 AI 的回复（包括思考过程和工具调用请求）作为一个消息添加到工作列表中
-                assistant_msg: Message = Message(
-                    role=Role.ASSISTANT,
-                    content=collected_content,
-                    tool_calls=collected_tool_calls
-                )
                 self.session.messages.append(assistant_msg)
 
                 # 批量执行所有工具调用
@@ -151,9 +168,15 @@ class TaskAgent:
                         content=f"\n\n[执行工具: {tool_call.name}]\n\n"
                     )
 
+                    # 调用追踪器：记录工具开始执行
+                    self.tracer.on_tool_start(tool_call)
+
                     # 执行单个工具调用，并记录结果
                     result: ToolResult = self.engine.execute_tool(tool_call)
                     tool_results.append(result)
+
+                    # 调用追踪器：记录工具执行完毕
+                    self.tracer.on_tool_end(result)
 
                 # 将所有工具的执行结果打包成一个消息，也添加到工作列表中
                 user_message: Message = Message(
