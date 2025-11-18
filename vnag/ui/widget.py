@@ -43,22 +43,23 @@ class HistoryWidget(QtWebEngineWidgets.QWebEngineView):
         # 连接页面加载完成信号
         self.page().loadFinished.connect(self._on_load_finished)
 
+        # 连接权限请求信号，处理剪贴板权限
+        self.page().permissionRequested.connect(self._on_permission_requested)
+
         # 加载本地HTML文件
         current_path: str = os.path.dirname(os.path.abspath(__file__))
         html_path: str = os.path.join(current_path, "resources", "chat.html")
         self.load(QtCore.QUrl.fromLocalFile(html_path))
 
+    def _on_permission_requested(self, permission: QtWebEngineCore.QWebEnginePermission) -> None:
+        """处理权限请求，自动授予剪贴板权限"""
+        if permission.permissionType() == QtWebEngineCore.QWebEnginePermission.PermissionType.ClipboardReadWrite:
+            permission.grant()
+
     def _on_load_finished(self, success: bool) -> None:
         """页面加载完成后的回调"""
         if not success:
             return
-
-        # 设置页面权限，允许复制代码块
-        self.page().setFeaturePermission(
-            self.page().url(),
-            QtWebEngineCore.QWebEnginePage.Feature.ClipboardReadWrite,
-            QtWebEngineCore.QWebEnginePage.PermissionPolicy.PermissionGrantedByUser,
-        )
 
         # 设置页面加载完成标志，并处理消息队列
         self.page_loaded = True
