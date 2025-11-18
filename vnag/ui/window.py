@@ -50,8 +50,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.profile_combo: QtWidgets.QComboBox = QtWidgets.QComboBox()
         self.profile_combo.setEditable(True)
-        self.profile_combo.lineEdit().setReadOnly(True)
-        self.profile_combo.lineEdit().setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        profile_line: QtWidgets.QLineEdit | None = self.profile_combo.lineEdit()
+        if profile_line:
+            profile_line.setReadOnly(True)
+            profile_line.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
         self.profile_model: QtGui.QStandardItemModel = QtGui.QStandardItemModel()
         self.profile_combo.setModel(self.profile_model)
@@ -274,7 +277,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if reply == QtWidgets.QMessageBox.StandardButton.Yes:
             # 移除对应的控件
-            widget: AgentWidget = self.agent_widgets.pop(session_id, None)
+            widget: AgentWidget | None = self.agent_widgets.pop(session_id, None)
             if widget:
                 # 从文件系统删除
                 self.engine.delete_agent(session_id)

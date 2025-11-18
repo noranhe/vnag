@@ -178,7 +178,7 @@ class TaskAgent:
                     self.tracer.on_tool_end(result)
 
                 # 将所有工具的执行结果打包成一个消息，也添加到工作列表中
-                user_message: Message = Message(
+                user_message = Message(
                     role=Role.USER,
                     tool_results=tool_results
                 )

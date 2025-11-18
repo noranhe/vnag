@@ -561,7 +561,7 @@ class ProfileDialog(QtWidgets.QDialog):
                     selected_tools.append(tool_name)
             iterator += 1
 
-        item: QtWidgets.QListWidgetItem | None = self.profile_list.currentItem()
+        item = self.profile_list.currentItem()
 
         # 更新现有配置
         if name in self.profiles:
@@ -576,7 +576,7 @@ class ProfileDialog(QtWidgets.QDialog):
             self.engine.update_profile(profile)
         # 创建新配置
         else:
-            profile: Profile = Profile(
+            profile = Profile(
                 name=name,
                 prompt=prompt,
                 tools=selected_tools,
@@ -649,18 +649,18 @@ class ProfileDialog(QtWidgets.QDialog):
         # 取消选中所有工具项
         iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
         while iterator.value():
-            item: QtWidgets.QTreeWidgetItem = iterator.value()
-            if item.childCount() == 0:  # 叶子节点/工具
-                item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            tree_item: QtWidgets.QTreeWidgetItem = iterator.value()
+            if tree_item.childCount() == 0:  # 叶子节点/工具
+                tree_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
             iterator += 1
 
         # 检查配置中的工具
         iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
         while iterator.value():
-            item = iterator.value()
-            tool_name = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            tree_item: QtWidgets.QTreeWidgetItem = iterator.value()
+            tool_name = tree_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
             if tool_name in profile.tools:
-                item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+                tree_item.setCheckState(0, QtCore.Qt.CheckState.Checked)
             iterator += 1
 
 
@@ -759,7 +759,7 @@ class ToolDialog(QtWidgets.QDialog):
                 )
                 for schema in sorted(schemas, key=lambda s: s.name):
                     _, name = schema.name.split("_", 1)
-                    item: QtWidgets.QTreeWidgetItem = QtWidgets.QTreeWidgetItem(
+                    item = QtWidgets.QTreeWidgetItem(
                         server_item,
                         ["", "", name]
                     )
