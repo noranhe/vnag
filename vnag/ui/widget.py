@@ -649,12 +649,11 @@ class ProfileDialog(QtWidgets.QDialog):
 
         self.iterations_spin.setValue(profile.max_iterations)
 
-        # 取消选中所有工具项
+        # 取消选中所有工具项（包括父节点）
         iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
         while iterator.value():
             tree_item: QtWidgets.QTreeWidgetItem = iterator.value()
-            if tree_item.childCount() == 0:  # 叶子节点/工具
-                tree_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            tree_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
             iterator += 1
 
         # 检查配置中的工具
