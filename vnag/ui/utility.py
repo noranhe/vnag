@@ -16,7 +16,8 @@ def load_favorite_models() -> list[str]:
     with open(SETTING_FILEPATH, encoding="utf-8") as f:
         try:
             data: dict = json.load(f)
-            return data.get("favorite_models", [])
+            models: list[str] = data.get("favorite_models", [])
+            return models
         except json.JSONDecodeError:
             return []
 

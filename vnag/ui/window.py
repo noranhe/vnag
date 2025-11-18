@@ -1,4 +1,4 @@
-
+from typing import cast
 
 from ..engine import AgentEngine
 from ..utility import WORKING_DIR
@@ -50,8 +50,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.profile_combo: QtWidgets.QComboBox = QtWidgets.QComboBox()
         self.profile_combo.setEditable(True)
-        self.profile_combo.lineEdit().setReadOnly(True)
-        self.profile_combo.lineEdit().setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        profile_line: QtWidgets.QLineEdit | None = self.profile_combo.lineEdit()
+        if profile_line:
+            profile_line.setReadOnly(True)
+            profile_line.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
 
         self.profile_model: QtGui.QStandardItemModel = QtGui.QStandardItemModel()
         self.profile_combo.setModel(self.profile_model)
@@ -274,7 +277,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if reply == QtWidgets.QMessageBox.StandardButton.Yes:
             # 移除对应的控件
-            widget: AgentWidget = self.agent_widgets.pop(session_id, None)
+            widget: AgentWidget | None = self.agent_widgets.pop(session_id, None)
             if widget:
                 # 从文件系统删除
                 self.engine.delete_agent(session_id)
@@ -314,7 +317,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         """事件过滤器"""
         if obj is self.session_list and event.type() == QtCore.QEvent.Type.KeyPress:
-            if event.key() == QtCore.Qt.Key.Key_Delete:
+            key_event: QtGui.QKeyEvent = cast(QtGui.QKeyEvent, event)
+            if key_event.key() == QtCore.Qt.Key.Key_Delete:
                 item: QtWidgets.QListWidgetItem = self.session_list.currentItem()
                 if item:
                     self.delete_agent_widget(item.data(QtCore.Qt.ItemDataRole.UserRole))

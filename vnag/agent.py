@@ -32,6 +32,10 @@ class TaskAgent:
             profile_name=self.profile.name
         )
 
+        # 流式生成时累积的内容
+        self.collected_content: str = ""
+        self.collected_tool_calls: list[ToolCall] = []
+
         # 新会话自动添加系统提示词并保存
         if not self.session.messages:
             system_message: Message = Message(
@@ -93,6 +97,10 @@ class TaskAgent:
 
         # 主循环，该循环负责处理多次工具调用的情况
         while iteration < self.profile.max_iterations:
+            # 重置收集的内容
+            self.collected_content = ""
+            self.collected_tool_calls = []
+
             # 迭代次数加1
             iteration += 1
 
@@ -109,8 +117,6 @@ class TaskAgent:
             self.tracer.on_llm_start(request)
 
             # 本轮循环中的数据缓存
-            collected_content: str = ""                     # 累积收到的文本内容
-            collected_tool_calls: list[ToolCall] = []       # 累积收到的工具调用请求
             finish_reason: FinishReason | None = None       # 累积收到的结束原因
 
             # 发送请求到AI服务端，并收集响应
@@ -121,11 +127,11 @@ class TaskAgent:
 
                 # 累积收到的文本内容
                 if delta.content:
-                    collected_content += delta.content
+                    self.collected_content += delta.content
 
                 # 累积收到的工具调用请求
                 if delta.calls:
-                    collected_tool_calls.extend(delta.calls)
+                    self.collected_tool_calls.extend(delta.calls)
 
                 # 记录结束原因
                 if delta.finish_reason:
@@ -137,12 +143,14 @@ class TaskAgent:
                 # 将原始的 Delta 对象直接转发给调用者，实现实时流式效果
                 yield delta
 
-            # 将AI的回复（包括思考过程和工具调用请求）作为一个消息
+            # 将AI的回复（包括思考过程和工具调用请求）作为一个消息添加到会话中
             assistant_msg: Message = Message(
                 role=Role.ASSISTANT,
-                content=collected_content,
-                tool_calls=collected_tool_calls
+                content=self.collected_content,
+                tool_calls=self.collected_tool_calls
             )
+
+            self.session.messages.append(assistant_msg)
 
             # 调用追踪器：记录响应接收
             self.tracer.on_llm_end(assistant_msg)
@@ -153,16 +161,13 @@ class TaskAgent:
             # 模型要求调用工具
             elif (
                 finish_reason == FinishReason.TOOL_CALLS
-                and collected_tool_calls    # 且收到了具体的工具调用请求
+                and self.collected_tool_calls    # 且收到了具体的工具调用请求
             ):
-                # 将 AI 的回复（包括思考过程和工具调用请求）作为一个消息添加到工作列表中
-                self.session.messages.append(assistant_msg)
-
                 # 批量执行所有工具调用
                 tool_results: list[ToolResult] = []
 
-                for tool_call in collected_tool_calls:
-                    # 在执行前，先通过 yield 发送一个通知，告诉上层应用“正在执行哪个工具”
+                for tool_call in self.collected_tool_calls:
+                    # 在执行前，先通过 yield 发送一个通知，告诉上层应用"正在执行哪个工具"
                     yield Delta(
                         id=response_id or str(uuid4()),
                         content=f"\n\n[执行工具: {tool_call.name}]\n\n"
@@ -179,7 +184,7 @@ class TaskAgent:
                     self.tracer.on_tool_end(result)
 
                 # 将所有工具的执行结果打包成一个消息，也添加到工作列表中
-                user_message: Message = Message(
+                user_message = Message(
                     role=Role.USER,
                     tool_results=tool_results
                 )
@@ -199,6 +204,22 @@ class TaskAgent:
             )
 
         # 将最新会话保存到文件
+        self._save_session()
+
+    def abort_stream(self) -> None:
+        """中止流式生成，保存已生成的部分内容"""
+        # 检查是否有内容需要保存
+        if not self.collected_content:
+            return
+
+        # 保存部分生成的内容
+        assistant_msg = Message(
+            role=Role.ASSISTANT,
+            content=self.collected_content,
+            tool_calls=self.collected_tool_calls
+        )
+        self.session.messages.append(assistant_msg)
+
         self._save_session()
 
     def invoke(self, prompt: str) -> Response:

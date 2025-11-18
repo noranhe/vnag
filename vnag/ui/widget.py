@@ -2,6 +2,7 @@ import json
 import os
 import uuid
 from collections import defaultdict
+from typing import cast
 
 from ..constant import Role
 from ..engine import AgentEngine, default_profile
@@ -42,22 +43,23 @@ class HistoryWidget(QtWebEngineWidgets.QWebEngineView):
         # 连接页面加载完成信号
         self.page().loadFinished.connect(self._on_load_finished)
 
+        # 连接权限请求信号，处理剪贴板权限
+        self.page().permissionRequested.connect(self._on_permission_requested)
+
         # 加载本地HTML文件
         current_path: str = os.path.dirname(os.path.abspath(__file__))
         html_path: str = os.path.join(current_path, "resources", "chat.html")
         self.load(QtCore.QUrl.fromLocalFile(html_path))
 
+    def _on_permission_requested(self, permission: QtWebEngineCore.QWebEnginePermission) -> None:
+        """处理权限请求，自动授予剪贴板权限"""
+        if permission.permissionType() == QtWebEngineCore.QWebEnginePermission.PermissionType.ClipboardReadWrite:
+            permission.grant()
+
     def _on_load_finished(self, success: bool) -> None:
         """页面加载完成后的回调"""
         if not success:
             return
-
-        # 设置页面权限，允许复制代码块
-        self.page().setFeaturePermission(
-            self.page().url(),
-            QtWebEngineCore.QWebEnginePage.Feature.ClipboardReadWrite,
-            QtWebEngineCore.QWebEnginePage.PermissionPolicy.PermissionGrantedByUser,
-        )
 
         # 设置页面加载完成标志，并处理消息队列
         self.page_loaded = True
@@ -145,6 +147,7 @@ class AgentWidget(QtWidgets.QWidget):
         self.engine: AgentEngine = engine
         self.agent: TaskAgent = agent
         self.models: list[str] = models
+        self.worker: StreamWorker | None = None
 
         self.init_ui()
         self.load_favorite_models()
@@ -169,6 +172,12 @@ class AgentWidget(QtWidgets.QWidget):
         self.send_button.setFixedWidth(button_width)
         self.send_button.setFixedHeight(button_height)
 
+        self.stop_button: QtWidgets.QPushButton = QtWidgets.QPushButton("停止")
+        self.stop_button.clicked.connect(self.stop_stream)
+        self.stop_button.setFixedWidth(button_width)
+        self.stop_button.setFixedHeight(button_height)
+        self.stop_button.setVisible(False)
+
         self.resend_button: QtWidgets.QPushButton = QtWidgets.QPushButton("重发")
         self.resend_button.clicked.connect(self.resend_round)
         self.resend_button.setFixedWidth(button_width)
@@ -191,6 +200,7 @@ class AgentWidget(QtWidgets.QWidget):
         hbox.addWidget(self.model_combo)
         hbox.addWidget(self.delete_button)
         hbox.addWidget(self.resend_button)
+        hbox.addWidget(self.stop_button)
         hbox.addWidget(self.send_button)
 
         vbox = QtWidgets.QVBoxLayout(self)
@@ -202,8 +212,41 @@ class AgentWidget(QtWidgets.QWidget):
         """显示当前会话的聊天记录"""
         self.history_widget.clear()
 
+        assistant_content: str = ""
+
         for message in self.agent.messages:
-            self.history_widget.append_message(message.role, message.content)
+            # 系统消息，不显示
+            if message.role is Role.SYSTEM:
+                continue
+            # 用户消息
+            elif message.role is Role.USER:
+                # 有内容
+                if message.content:
+                    # 如果助手内容不为空，则先显示助手内容（包含之前的工具调用记录）
+                    if assistant_content:
+                        self.history_widget.append_message(Role.ASSISTANT, assistant_content)
+                        assistant_content = ""
+
+                    # 显示用户内容
+                    self.history_widget.append_message(Role.USER, message.content)
+                # 没有内容（工具调用结果返回），则跳过
+                else:
+                    continue
+            # 助手消息
+            elif message.role is Role.ASSISTANT:
+                # 有内容，则添加到助手内容
+                if message.content:
+                    assistant_content += message.content
+
+                # 有工具调用请求，则记录调用工具名称
+                if message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        assistant_content += f"\n\n[执行工具: {tool_call.name}]\n\n"
+
+        # 显示消息
+        if assistant_content:
+            self.history_widget.append_message(Role.ASSISTANT, assistant_content)
+            assistant_content = ""
 
         self.update_buttons()
 
@@ -227,7 +270,8 @@ class AgentWidget(QtWidgets.QWidget):
         self.history_widget.append_message(Role.USER, text)
         self.history_widget.start_stream()
 
-        self.send_button.setEnabled(False)
+        self.send_button.setVisible(False)
+        self.stop_button.setVisible(True)
         self.resend_button.setEnabled(False)
         self.delete_button.setEnabled(False)
 
@@ -236,7 +280,13 @@ class AgentWidget(QtWidgets.QWidget):
         worker.signals.finished.connect(self.on_stream_finished)
         worker.signals.error.connect(self.on_stream_error)
 
+        self.worker = worker
         QtCore.QThreadPool.globalInstance().start(worker)
+
+    def stop_stream(self) -> None:
+        """停止当前流式请求"""
+        if self.worker:
+            self.worker.stop()
 
     def delete_round(self) -> None:
         """删除最后一轮对话"""
@@ -264,9 +314,11 @@ class AgentWidget(QtWidgets.QWidget):
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         """事件过滤器"""
         if obj is self.input_widget and event.type() == QtCore.QEvent.Type.KeyPress:
+            # 将 QEvent 转换为 QKeyEvent
+            key_event: QtGui.QKeyEvent = cast(QtGui.QKeyEvent, event)
             if (
-                event.key() in [QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter]
-                and not event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+                key_event.key() in [QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter]
+                and not key_event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
             ):
                 self.send_message()
                 return True
@@ -278,15 +330,25 @@ class AgentWidget(QtWidgets.QWidget):
 
     def on_stream_finished(self) -> None:
         """处理数据流结束事件"""
-        self.send_button.setEnabled(True)
+        self.worker = None
+
         self.history_widget.finish_stream()
         self.update_buttons()
 
+        self.send_button.setVisible(True)
+        self.stop_button.setVisible(False)
+
     def on_stream_error(self, error_msg: str) -> None:
         """处理数据流错误事件"""
-        self.send_button.setEnabled(True)
-        QtWidgets.QMessageBox.critical(self, "错误", f"流式请求失败：\n{error_msg}")
+        self.worker = None
+
+        self.history_widget.finish_stream()
         self.update_buttons()
+
+        self.send_button.setVisible(True)
+        self.stop_button.setVisible(False)
+
+        QtWidgets.QMessageBox.critical(self, "错误", f"流式请求失败：\n{error_msg}")
 
     def on_model_changed(self, model: str) -> None:
         """处理模型变更"""
@@ -528,8 +590,6 @@ class ProfileDialog(QtWidgets.QDialog):
                     selected_tools.append(tool_name)
             iterator += 1
 
-        item: QtWidgets.QListWidgetItem | None = self.profile_list.currentItem()
-
         # 更新现有配置
         if name in self.profiles:
             profile: Profile = self.profiles[name]
@@ -543,7 +603,7 @@ class ProfileDialog(QtWidgets.QDialog):
             self.engine.update_profile(profile)
         # 创建新配置
         else:
-            profile: Profile = Profile(
+            profile = Profile(
                 name=name,
                 prompt=prompt,
                 tools=selected_tools,
@@ -555,7 +615,7 @@ class ProfileDialog(QtWidgets.QDialog):
 
         self.load_profiles()
 
-        QtWidgets.QMessageBox.information(self, "成功", f"{name} 智能体配置已保存！")
+        QtWidgets.QMessageBox.information(self, "成功", f"{name} 智能体配置已保存！", QtWidgets.QMessageBox.StandardButton.Ok)
 
     def delete_profile(self) -> None:
         """删除智能体配置"""
@@ -613,21 +673,20 @@ class ProfileDialog(QtWidgets.QDialog):
 
         self.iterations_spin.setValue(profile.max_iterations)
 
-        # 取消选中所有工具项
+        # 取消选中所有工具项（包括父节点）
         iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
         while iterator.value():
-            item: QtWidgets.QTreeWidgetItem = iterator.value()
-            if item.childCount() == 0:  # 叶子节点/工具
-                item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            tree_item: QtWidgets.QTreeWidgetItem = iterator.value()
+            tree_item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
             iterator += 1
 
         # 检查配置中的工具
         iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
         while iterator.value():
-            item = iterator.value()
-            tool_name = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            tool_item: QtWidgets.QTreeWidgetItem = iterator.value()
+            tool_name = tool_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
             if tool_name in profile.tools:
-                item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+                tool_item.setCheckState(0, QtCore.Qt.CheckState.Checked)
             iterator += 1
 
 
@@ -726,7 +785,7 @@ class ToolDialog(QtWidgets.QDialog):
                 )
                 for schema in sorted(schemas, key=lambda s: s.name):
                     _, name = schema.name.split("_", 1)
-                    item: QtWidgets.QTreeWidgetItem = QtWidgets.QTreeWidgetItem(
+                    item = QtWidgets.QTreeWidgetItem(
                         server_item,
                         ["", "", name]
                     )
@@ -885,7 +944,7 @@ class ModelDialog(QtWidgets.QDialog):
             models.append(item.text())
 
         save_favorite_models(models)
-        QtWidgets.QMessageBox.information(self, "成功", "常用模型配置已保存！")
+        QtWidgets.QMessageBox.information(self, "成功", "常用模型配置已保存！", QtWidgets.QMessageBox.StandardButton.Ok)
 
         self.close()
 
@@ -978,4 +1037,4 @@ class ModelDialog(QtWidgets.QDialog):
         if not counts:
             return None
 
-        return max(counts, key=counts.get)
+        return max(counts, key=lambda x: counts[x])
