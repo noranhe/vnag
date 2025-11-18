@@ -2,6 +2,7 @@ import json
 import os
 import uuid
 from collections import defaultdict
+from typing import cast
 
 from ..constant import Role
 from ..engine import AgentEngine, default_profile
@@ -297,9 +298,11 @@ class AgentWidget(QtWidgets.QWidget):
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         """事件过滤器"""
         if obj is self.input_widget and event.type() == QtCore.QEvent.Type.KeyPress:
+            # 将 QEvent 转换为 QKeyEvent
+            key_event: QtGui.QKeyEvent = cast(QtGui.QKeyEvent, event)
             if (
-                event.key() in [QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter]
-                and not event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+                key_event.key() in [QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter]
+                and not key_event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
             ):
                 self.send_message()
                 return True
@@ -561,7 +564,7 @@ class ProfileDialog(QtWidgets.QDialog):
                     selected_tools.append(tool_name)
             iterator += 1
 
-        item = self.profile_list.currentItem()
+        list_item = self.profile_list.currentItem()
 
         # 更新现有配置
         if name in self.profiles:
@@ -588,7 +591,7 @@ class ProfileDialog(QtWidgets.QDialog):
 
         self.load_profiles()
 
-        QtWidgets.QMessageBox.information(self, "成功", f"{name} 智能体配置已保存！")
+        QtWidgets.QMessageBox.information(self, "成功", f"{name} 智能体配置已保存！", QtWidgets.QMessageBox.StandardButton.Ok)
 
     def delete_profile(self) -> None:
         """删除智能体配置"""
@@ -657,10 +660,10 @@ class ProfileDialog(QtWidgets.QDialog):
         # 检查配置中的工具
         iterator = QtWidgets.QTreeWidgetItemIterator(self.tool_tree)
         while iterator.value():
-            tree_item: QtWidgets.QTreeWidgetItem = iterator.value()
-            tool_name = tree_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            tool_item: QtWidgets.QTreeWidgetItem = iterator.value()
+            tool_name = tool_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
             if tool_name in profile.tools:
-                tree_item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+                tool_item.setCheckState(0, QtCore.Qt.CheckState.Checked)
             iterator += 1
 
 
@@ -918,7 +921,7 @@ class ModelDialog(QtWidgets.QDialog):
             models.append(item.text())
 
         save_favorite_models(models)
-        QtWidgets.QMessageBox.information(self, "成功", "常用模型配置已保存！")
+        QtWidgets.QMessageBox.information(self, "成功", "常用模型配置已保存！", QtWidgets.QMessageBox.StandardButton.Ok)
 
         self.close()
 
@@ -1011,4 +1014,4 @@ class ModelDialog(QtWidgets.QDialog):
         if not counts:
             return None
 
-        return max(counts, key=counts.get)
+        return max(counts, key=lambda x: counts[x])

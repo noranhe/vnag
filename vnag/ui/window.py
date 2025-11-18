@@ -1,4 +1,4 @@
-
+from typing import cast
 
 from ..engine import AgentEngine
 from ..utility import WORKING_DIR
@@ -317,7 +317,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         """事件过滤器"""
         if obj is self.session_list and event.type() == QtCore.QEvent.Type.KeyPress:
-            if event.key() == QtCore.Qt.Key.Key_Delete:
+            key_event: QtGui.QKeyEvent = cast(QtGui.QKeyEvent, event)
+            if key_event.key() == QtCore.Qt.Key.Key_Delete:
                 item: QtWidgets.QListWidgetItem = self.session_list.currentItem()
                 if item:
                     self.delete_agent_widget(item.data(QtCore.Qt.ItemDataRole.UserRole))
