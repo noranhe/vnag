@@ -147,6 +147,7 @@ class AgentWidget(QtWidgets.QWidget):
         self.engine: AgentEngine = engine
         self.agent: TaskAgent = agent
         self.models: list[str] = models
+        self.worker: StreamWorker | None = None
 
         self.init_ui()
         self.load_favorite_models()
@@ -171,6 +172,12 @@ class AgentWidget(QtWidgets.QWidget):
         self.send_button.setFixedWidth(button_width)
         self.send_button.setFixedHeight(button_height)
 
+        self.stop_button: QtWidgets.QPushButton = QtWidgets.QPushButton("停止")
+        self.stop_button.clicked.connect(self.stop_stream)
+        self.stop_button.setFixedWidth(button_width)
+        self.stop_button.setFixedHeight(button_height)
+        self.stop_button.setVisible(False)
+
         self.resend_button: QtWidgets.QPushButton = QtWidgets.QPushButton("重发")
         self.resend_button.clicked.connect(self.resend_round)
         self.resend_button.setFixedWidth(button_width)
@@ -193,6 +200,7 @@ class AgentWidget(QtWidgets.QWidget):
         hbox.addWidget(self.model_combo)
         hbox.addWidget(self.delete_button)
         hbox.addWidget(self.resend_button)
+        hbox.addWidget(self.stop_button)
         hbox.addWidget(self.send_button)
 
         vbox = QtWidgets.QVBoxLayout(self)
@@ -262,7 +270,8 @@ class AgentWidget(QtWidgets.QWidget):
         self.history_widget.append_message(Role.USER, text)
         self.history_widget.start_stream()
 
-        self.send_button.setEnabled(False)
+        self.send_button.setVisible(False)
+        self.stop_button.setVisible(True)
         self.resend_button.setEnabled(False)
         self.delete_button.setEnabled(False)
 
@@ -271,7 +280,13 @@ class AgentWidget(QtWidgets.QWidget):
         worker.signals.finished.connect(self.on_stream_finished)
         worker.signals.error.connect(self.on_stream_error)
 
+        self.worker = worker
         QtCore.QThreadPool.globalInstance().start(worker)
+
+    def stop_stream(self) -> None:
+        """停止当前流式请求"""
+        if self.worker:
+            self.worker.stop()
 
     def delete_round(self) -> None:
         """删除最后一轮对话"""
@@ -315,15 +330,25 @@ class AgentWidget(QtWidgets.QWidget):
 
     def on_stream_finished(self) -> None:
         """处理数据流结束事件"""
-        self.send_button.setEnabled(True)
+        self.worker = None
+
         self.history_widget.finish_stream()
         self.update_buttons()
 
+        self.send_button.setVisible(True)
+        self.stop_button.setVisible(False)
+
     def on_stream_error(self, error_msg: str) -> None:
         """处理数据流错误事件"""
-        self.send_button.setEnabled(True)
-        QtWidgets.QMessageBox.critical(self, "错误", f"流式请求失败：\n{error_msg}")
+        self.worker = None
+
+        self.history_widget.finish_stream()
         self.update_buttons()
+
+        self.send_button.setVisible(True)
+        self.stop_button.setVisible(False)
+
+        QtWidgets.QMessageBox.critical(self, "错误", f"流式请求失败：\n{error_msg}")
 
     def on_model_changed(self, model: str) -> None:
         """处理模型变更"""
@@ -564,8 +589,6 @@ class ProfileDialog(QtWidgets.QDialog):
                 if tool_name:  # 工具项，不是分类
                     selected_tools.append(tool_name)
             iterator += 1
-
-        list_item = self.profile_list.currentItem()
 
         # 更新现有配置
         if name in self.profiles:
