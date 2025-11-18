@@ -202,8 +202,41 @@ class AgentWidget(QtWidgets.QWidget):
         """显示当前会话的聊天记录"""
         self.history_widget.clear()
 
+        assistant_content: str = ""
+
         for message in self.agent.messages:
-            self.history_widget.append_message(message.role, message.content)
+            # 系统消息，不显示
+            if message.role is Role.SYSTEM:
+                continue
+            # 用户消息
+            elif message.role is Role.USER:
+                # 有内容
+                if message.content:
+                    # 如果助手内容不为空，则先显示助手内容（包含之前的工具调用记录）
+                    if assistant_content:
+                        self.history_widget.append_message(Role.ASSISTANT, assistant_content)
+                        assistant_content = ""
+
+                    # 显示用户内容
+                    self.history_widget.append_message(Role.USER, message.content)
+                # 没有内容（工具调用结果返回），则跳过
+                else:
+                    continue
+            # 助手消息
+            elif message.role is Role.ASSISTANT:
+                # 有内容，则添加到助手内容
+                if message.content:
+                    assistant_content += message.content
+
+                # 有工具调用请求，则记录调用工具名称
+                if message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        assistant_content += f"\n\n[执行工具: {tool_call.name}]\n\n"
+
+        # 显示消息
+        if assistant_content:
+            self.history_widget.append_message(Role.ASSISTANT, assistant_content)
+            assistant_content = ""
 
         self.update_buttons()
 

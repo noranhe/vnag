@@ -137,12 +137,14 @@ class TaskAgent:
                 # 将原始的 Delta 对象直接转发给调用者，实现实时流式效果
                 yield delta
 
-            # 将AI的回复（包括思考过程和工具调用请求）作为一个消息
+            # 将AI的回复（包括思考过程和工具调用请求）作为一个消息添加到会话中
             assistant_msg: Message = Message(
                 role=Role.ASSISTANT,
                 content=collected_content,
                 tool_calls=collected_tool_calls
             )
+
+            self.session.messages.append(assistant_msg)
 
             # 调用追踪器：记录响应接收
             self.tracer.on_llm_end(assistant_msg)
@@ -155,9 +157,6 @@ class TaskAgent:
                 finish_reason == FinishReason.TOOL_CALLS
                 and collected_tool_calls    # 且收到了具体的工具调用请求
             ):
-                # 将 AI 的回复（包括思考过程和工具调用请求）作为一个消息添加到工作列表中
-                self.session.messages.append(assistant_msg)
-
                 # 批量执行所有工具调用
                 tool_results: list[ToolResult] = []
 
