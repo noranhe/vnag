@@ -1,4 +1,5 @@
 import traceback
+from typing import Any
 
 from ..agent import TaskAgent
 from ..constant import Role
@@ -24,6 +25,9 @@ class StreamSignals(QtCore.QObject):
     # 标题生成完成
     title: QtCore.Signal = QtCore.Signal(str)
 
+    # Token 使用量更新 (input_tokens, output_tokens)
+    usage: QtCore.Signal = QtCore.Signal(int, int)
+
 
 class StreamWorker(QtCore.QRunnable):
     """
@@ -42,8 +46,20 @@ class StreamWorker(QtCore.QRunnable):
         """停止流式请求"""
         self.stopped = True
 
+    def _safe_emit(self, signal: QtCore.SignalInstance, *args: Any) -> None:
+        """安全地发出信号，忽略对象已删除的情况"""
+        try:
+            signal.emit(*args)
+        except RuntimeError:
+            # 信号对象已被删除（窗口已关闭），忽略
+            pass
+
     def run(self) -> None:
         """处理数据流"""
+        # 累积 Token 使用量
+        total_input: int = 0
+        total_output: int = 0
+
         try:
             for delta in self.agent.stream(self.prompt):
                 # 用户手动停止
@@ -53,29 +69,35 @@ class StreamWorker(QtCore.QRunnable):
                     break
                 # 收到 thinking 数据块
                 if delta.thinking:
-                    self.signals.thinking.emit(delta.thinking)
+                    self._safe_emit(self.signals.thinking, delta.thinking)
                 # 收到 content 数据块
                 if delta.content:
-                    self.signals.delta.emit(delta.content)
+                    self._safe_emit(self.signals.delta, delta.content)
+                # 累积 Token 使用量
+                if delta.usage:
+                    total_input += delta.usage.input_tokens
+                    total_output += delta.usage.output_tokens
 
         except Exception:
             # 中止流式生成，保存已生成的部分内容
             self.agent.abort_stream()
 
             error_msg: str = traceback.format_exc()
-            self.signals.error.emit(error_msg)
+            self._safe_emit(self.signals.error, error_msg)
         finally:
-            self.signals.finished.emit()
+            # 发送最终的 Token 使用量
+            self._safe_emit(self.signals.usage, total_input, total_output)
+            self._safe_emit(self.signals.finished)
 
         # 流式响应完成后，检查是否需要自动生成标题
         if not self.stopped and self._should_generate_title():
             try:
                 title: str = self.agent.generate_title(max_length=10)
                 if title:
-                    self.signals.title.emit(title)
+                    self._safe_emit(self.signals.title, title)
             except Exception:
                 error_msg = traceback.format_exc()
-                self.signals.error.emit(error_msg)
+                self._safe_emit(self.signals.error, error_msg)
 
     def _should_generate_title(self) -> bool:
         """判断是否需要自动生成标题"""

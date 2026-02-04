@@ -44,6 +44,7 @@ class AgentEngine:
 
         self._profiles: dict[str, Profile] = {}
         self._agents: dict[str, TaskAgent] = {}
+        self._models: list[str] = []
 
     def init(self) -> None:
         """初始化引擎"""
@@ -208,7 +209,14 @@ class AgentEngine:
 
     def list_models(self) -> list[str]:
         """查询可用模型列表"""
-        return self.gateway.list_models()
+        if not self._models:
+            try:
+                self._models = self.gateway.list_models()
+            except Exception:
+                # 填入错误提示，避免重复请求
+                self._models = ["获取模型列表失败，请检查API配置"]
+
+        return self._models
 
     def execute_tool(self, tool_call: ToolCall) -> ToolResult:
         """执行单个工具并返回结果"""

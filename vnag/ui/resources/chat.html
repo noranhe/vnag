@@ -53,13 +53,38 @@
                 scrollToBottom();
             }
 
-            window.appendAssistantMessage = function(markdownContent, assistantName) {
+            window.appendAssistantMessage = function(markdownContent, assistantName, thinkingContent, inputTokens, outputTokens) {
                 const history = document.getElementById("history");
                 const messageDiv = document.createElement("div");
                 messageDiv.className = "message assistant";
                 
+                // 存储原始 markdown 内容用于复制
+                messageDiv.dataset.rawContent = markdownContent;
+                
                 const htmlContent = md.render(markdownContent);
                 const roleName = assistantName || 'Assistant';
+
+                // 构建 thinking 部分的 HTML
+                let thinkingHtml = '';
+                if (thinkingContent && thinkingContent.trim()) {
+                    const thinkingRendered = md.render(thinkingContent);
+                    thinkingHtml = `
+                        <div class="thinking-container">
+                            <div class="thinking-header">
+                                <span class="thinking-icon">💡</span>
+                                <span class="thinking-label">思考过程</span>
+                                <span class="thinking-toggle">▼</span>
+                            </div>
+                            <div class="thinking-content">${thinkingRendered}</div>
+                        </div>
+                    `;
+                }
+
+                // 构建 token usage 显示的 HTML
+                let usageHtml = '';
+                if (inputTokens > 0 || outputTokens > 0) {
+                    usageHtml = `<span class="token-usage">In ${inputTokens.toLocaleString()} / Out ${outputTokens.toLocaleString()}</span>`;
+                }
 
                 messageDiv.innerHTML = `
                     <div class="message-header">
@@ -67,8 +92,36 @@
                         <div class="role">${roleName}</div>
                         <div class="timestamp">${getCurrentTime()}</div>
                     </div>
+                    ${thinkingHtml}
                     <div class="message-content">${htmlContent}</div>
+                    <div class="message-footer">
+                        ${usageHtml}
+                        <button class="copy-all-button" title="复制全文">📋 复制</button>
+                    </div>
                 `;
+
+                // 添加全文复制按钮事件
+                addCopyAllButtonEvent(messageDiv);
+
+                // 添加折叠/展开功能（如果有 thinking）
+                if (thinkingContent && thinkingContent.trim()) {
+                    const thinkingHeader = messageDiv.querySelector('.thinking-header');
+                    thinkingHeader.addEventListener('click', function() {
+                        const container = this.parentElement;
+                        const content = container.querySelector('.thinking-content');
+                        const toggle = container.querySelector('.thinking-toggle');
+                        
+                        if (container.classList.contains('collapsed')) {
+                            container.classList.remove('collapsed');
+                            content.style.display = 'block';
+                            toggle.textContent = '▼';
+                        } else {
+                            container.classList.add('collapsed');
+                            content.style.display = 'none';
+                            toggle.textContent = '▶';
+                        }
+                    });
+                }
 
                 addCopyButtons(messageDiv);
                 history.appendChild(messageDiv);
@@ -80,6 +133,7 @@
                 const messageDiv = document.createElement("div");
                 messageDiv.id = msgId;
                 messageDiv.className = "message assistant";
+                messageDiv.dataset.rawContent = '';  // 初始化为空
 
                 const roleName = assistantName || 'Assistant';
 
@@ -98,7 +152,13 @@
                         <div class="thinking-content"></div>
                     </div>
                     <div class="message-content"></div>
+                    <div class="message-footer">
+                        <button class="copy-all-button" title="复制全文">📋 复制</button>
+                    </div>
                 `;
+
+                // 添加全文复制按钮事件
+                addCopyAllButtonEvent(messageDiv);
 
                 // 添加折叠/展开功能
                 const thinkingHeader = messageDiv.querySelector('.thinking-header');
@@ -148,6 +208,9 @@
             window.updateAssistantMessage = function(msgId, markdownContent) {
                 const messageDiv = document.getElementById(msgId);
                 if (messageDiv) {
+                    // 更新原始内容
+                    messageDiv.dataset.rawContent = markdownContent;
+
                     const contentDiv = messageDiv.querySelector('.message-content');
 
                     const el = document.documentElement;
@@ -161,10 +224,19 @@
                 }
             }
 
-            window.finishAssistantMessage = function(msgId) {
+            window.finishAssistantMessage = function(msgId, inputTokens, outputTokens) {
                 const messageDiv = document.getElementById(msgId);
                 if (messageDiv) {
                     addCopyButtons(messageDiv);
+
+                    // 添加 Token 使用量显示（分开显示 input/output）
+                    if (inputTokens > 0 || outputTokens > 0) {
+                        const footer = messageDiv.querySelector('.message-footer');
+                        const usageSpan = document.createElement('span');
+                        usageSpan.className = 'token-usage';
+                        usageSpan.innerText = `In ${inputTokens.toLocaleString()} / Out ${outputTokens.toLocaleString()}`;
+                        footer.insertBefore(usageSpan, footer.firstChild);
+                    }
                 }
             }
 
@@ -173,19 +245,38 @@
                 pres.forEach(pre => {
                     const button = document.createElement('button');
                     button.className = 'copy-button';
-                    button.innerText = 'Copy';
+                    button.innerText = '📋 复制';
                     
                     button.addEventListener('click', () => {
                         const code = pre.querySelector('code').innerText;
                         navigator.clipboard.writeText(code).then(() => {
-                            button.innerText = 'Copied!';
+                            button.innerText = '✓ 已复制';
                             setTimeout(() => {
-                                button.innerText = 'Copy';
+                                button.innerText = '📋 复制';
                             }, 2000);
                         });
                     });
                     pre.appendChild(button);
                 });
+            }
+
+            function addCopyAllButtonEvent(messageDiv) {
+                const copyAllBtn = messageDiv.querySelector('.copy-all-button');
+                if (copyAllBtn) {
+                    copyAllBtn.addEventListener('click', function() {
+                        let rawContent = messageDiv.dataset.rawContent;
+                        // 移除工具调用记录
+                        rawContent = rawContent.replace(/\[执行工具: [^\]]+\]\s*/g, '');
+                        // 清理多余的空行
+                        rawContent = rawContent.replace(/\n{3,}/g, '\n\n').trim();
+                        navigator.clipboard.writeText(rawContent).then(() => {
+                            this.innerText = '✓ 已复制';
+                            setTimeout(() => {
+                                this.innerText = '📋 复制';
+                            }, 2000);
+                        });
+                    });
+                }
             }
 
             function scrollToBottom() {

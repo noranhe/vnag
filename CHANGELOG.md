@@ -1,3 +1,38 @@
+# 0.7.0
+
+## Add
+
+1. 新增LitellmGateway，支持LiteLLM AI网关代理服务
+2. 添加联网搜索工具集（博查、Tavily、Serper、Jina四种搜索API）
+3. 新增基于jina.ai的fetch_markdown工具，用于获取网页Markdown内容
+4. 增加token使用量的跟踪和显示
+5. 增加回答一键复制按钮
+
+## Mod
+
+1. AgentEngine.list_models增加异常处理，避免UI初始化显示失败
+2. 添加项目Sphinx文档
+
+# 0.6.0
+
+## Add
+
+1. 增加历史会话的思考内容显示
+
+## Mod
+
+1. 模型下拉框仅显示当前可用模型
+2. 对于交错思维的思考输出强制换行
+3. 完成OpenrouterGateway的Gemini模型推理支持
+4. 优化报错信息对话框的显示
+
+## Fix
+
+1. 修复关闭时信号对象销毁导致的报错
+2. 完善OpenrouterGateway的Claude系列模型支持
+3. 修复DeepSeek和MiniMax的工具调用数据传递问题
+
+
 # 0.5.0
 
 ## Add
